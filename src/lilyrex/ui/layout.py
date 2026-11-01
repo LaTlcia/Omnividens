@@ -59,10 +59,14 @@ class WindowLayout:
 
         wr_frame = tk.Frame(self.top_frame, bg="#16213e")
         wr_frame.pack(fill=tk.X)
-        self.lbl_wr_a = tk.Label(wr_frame, text="WR-A: -", fg="white", bg="#16213e")
-        self.lbl_wr_a.pack(side=tk.LEFT, expand=True)
-        self.lbl_wr_b = tk.Label(wr_frame, text="WR-B: -", fg="white", bg="#16213e")
-        self.lbl_wr_b.pack(side=tk.LEFT, expand=True)
+        for column, sequences in enumerate((('A', 'BA'), ('B', 'AB'))):
+            wr_frame.grid_columnconfigure(column, weight=1, uniform='winrates')
+            group = tk.Frame(wr_frame, bg="#16213e")
+            group.grid(row=0, column=column)
+            for sequence in sequences:
+                label = tk.Label(group, text=f"WR {sequence}: -", fg="white", bg="#16213e")
+                label.pack(side=tk.LEFT, padx=8)
+                setattr(self, f'lbl_wr_{sequence.lower()}', label)
 
         self.battlefield = tk.Frame(self.main, bg="#1a1a2e")
         self.battlefield.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)

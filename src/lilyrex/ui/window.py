@@ -1,12 +1,12 @@
 """Tk window, driven by the application; no network or file dependencies."""
 from __future__ import annotations
 from collections import deque
-import random
 import time
 
 from lilyrex.domain.ports import ControlPort
 from lilyrex.domain.playback import PlaybackPort
 from lilyrex.domain.battle_time import format_remaining
+from lilyrex.domain.core_winrate import calculate_core_winrate
 from .battle_footer import BattleFooter
 from .damage_tooltip import DamageTooltip, TooltipTheme
 from .front_card import PlayerCardPanel
@@ -96,8 +96,10 @@ class GameStyleGUI(WindowLayout, BattleFooter):
             self.lbl_guild_right.config(text='Guild B')
             self.lbl_score_left.config(text='0')
             self.lbl_score_right.config(text='0')
-            self.lbl_wr_a.config(text='WR-A: -')
-            self.lbl_wr_b.config(text='WR-B: -')
+            self.lbl_wr_a.config(text='WR A: -')
+            self.lbl_wr_ba.config(text='WR BA: -')
+            self.lbl_wr_b.config(text='WR B: -')
+            self.lbl_wr_ab.config(text='WR AB: -')
             self.update_bottom_info((), (), {}, 0)
         self.refresh(force=True)
 
@@ -116,7 +118,9 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         self.lbl_countdown.config(text=format_remaining(remaining))
         if (a, b) != self.last_points:
             self.lbl_wr_a.config(text=f"WR A: {self.calc_wr(a, b, 'A')}")
+            self.lbl_wr_ba.config(text=f"WR BA: {self.calc_wr(a, b, 'BA')}")
             self.lbl_wr_b.config(text=f"WR B: {self.calc_wr(a, b, 'B')}")
+            self.lbl_wr_ab.config(text=f"WR AB: {self.calc_wr(a, b, 'AB')}")
             self.last_points = a, b
         columns = [[], [], [], []]
         for player in view.players:
@@ -172,19 +176,9 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         self.refresh(force=True)
 
     @staticmethod
-    def calc_wr(a, b, order):
-        # Preserve the original rough UI simulation, independent of damage math.
-        wins = 0
-        for _ in range(50):
-            left, right = a, b
-            for side in order:
-                fraction = random.uniform(.15, .30)
-                if side == 'A':
-                    left, right = left + right * fraction, right * (1 - fraction)
-                else:
-                    left, right = left * (1 - fraction), right + left * fraction
-            wins += left > right
-        return f"{wins * 2}%"
+    def calc_wr(a: int, b: int, order: str) -> str:
+        probability = calculate_core_winrate(a, b, order).probability
+        return f'{100 * probability:.2f}'.rstrip('0').rstrip('.') + '%'
 
     def _on_damage_hover(self, uid, card, skill, x, y):
         if self.damage_tooltip is None or self.damage_preview is None:
