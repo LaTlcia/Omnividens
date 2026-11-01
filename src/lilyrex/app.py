@@ -15,12 +15,13 @@ def make_session_factory(config: AppConfig, namebases: dict | None = None, catal
     from lilyrex.services.damage_preview import DamagePreviewService
     bases = namebases or load_namebases(config.namebase_dir)
     jobs = job_card_types(bases['chara_data'])
+    card_attributes = {cid: row[1] for cid, row in bases['card_data'].items()}
     catalog = catalog or LocalDamageCatalog(
         config.catalog_dir / 'damage_catalog.json' if config.catalog_dir else None)
     passives = load_passive_settings(config.path)
     def create():
         preview = DamagePreviewService(catalog, config.preview.settings_for, passives)
-        return BattleSession(preview, lambda history: snapshot_from_history(history, jobs))
+        return BattleSession(preview, lambda history: snapshot_from_history(history, jobs), card_attributes)
     return create
 
 

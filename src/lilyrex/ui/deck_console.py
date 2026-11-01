@@ -20,6 +20,7 @@ class DeckConsole:
         self._head_key = None
         self.on_hover = None
         self.on_hover_end = None
+        self.on_hover_leave = None
         self._hit_rows = []
         self._hit_row_height = self.ROW_MIN
         self._hover_y = None
@@ -29,12 +30,13 @@ class DeckConsole:
         self.body.pack(fill=tk.BOTH, expand=True, padx=6, pady=(2, 6))
         self.body.bind("<Configure>", lambda e: (self._end_hover(), self.redraw()))
         self.body.bind("<Motion>", self._on_motion)
-        self.body.bind("<Leave>", lambda e: self._end_hover())
+        self.body.bind("<Leave>", lambda e: self._end_hover(leaving=True))
 
-    def _end_hover(self):
+    def _end_hover(self, *, leaving=False):
         self._hover_y = None
-        if self.on_hover_end:
-            self.on_hover_end()
+        callback = self.on_hover_leave if leaving and self.on_hover_leave else self.on_hover_end
+        if callback:
+            callback()
 
     def _on_motion(self, event):
         self._hover_y = event.y

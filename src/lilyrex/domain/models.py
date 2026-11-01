@@ -63,6 +63,9 @@ class DamageSkill:
     min_charge_bonus: float = 0.0
     charge_interval_seconds: int = 60
     charge_full_seconds: int = 600
+    element_attributes: tuple[int, ...] = ()
+    spread_max_targets: bool = False
+    element_sp_multiplier: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,7 @@ class ModifierResult:
     received_multiplier: float
     crit_rate: float
     notes: tuple[str, ...] = ()
+    factors: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -171,6 +175,7 @@ class PreviewResult:
     estimates: tuple[DamageEstimate, ...] = ()
     assumptions: tuple[str, ...] = ()
     error: str | None = None
+    calculation: tuple[str, ...] = ()
 
 
 class DamageCatalog(Protocol):

@@ -6,6 +6,7 @@ import math
 from .attributes import attribute_value
 from .charge import charge_bonus
 from .orders import resolve_orders
+from .skill_conditions import element_condition
 from .models import (
     ActiveOrder, BattlePlayer, BattleSnapshot, DamageSkill,
     EstimateSettings, ModifierResult, OrderEffect,
@@ -90,19 +91,14 @@ def calculate_modifiers(
             step_seconds = math.floor(max(0.0, min(elapsed, skill.charge_full_seconds))
                                       / skill.charge_interval_seconds) * skill.charge_interval_seconds
             notes.append(f"蓄力第{step_seconds / 60:g}分钟：成长 +{growth:.2%}，满档 +{skill.max_charge_bonus:.2%}")
-    magnification = (skill.magnification + extra) * (1 + growth)
-
     costume = 1.0
     if attacker.job_card_type == skill.card_type:
         costume = settings.costume_match_multiplier
     elif not attacker.job_card_type:
         notes.append("衣装主职未知，衣装增益按×1")
-    eh = 1.0
-    if skill.eh_multiplier != 1:
-        if attacker.last_attribute not in (1, 2, 3, 4, 5):
-            notes.append("上一张牌属性未知，EH按未触发")
-        elif attacker.last_attribute != skill.attribute:
-            eh = skill.eh_multiplier
+    condition = element_condition(skill, attacker.last_attribute)
+    eh = condition.multiplier
+    notes.extend(condition.notes)
     ct = 1.0
     if skill.ct_multiplier != 1:
         if losing:
@@ -112,14 +108,18 @@ def calculate_modifiers(
     if skill.unsupported:
         notes.append("未计入技能机制：" + "、".join(skill.unsupported))
 
-    multiplier = (.1 * magnification * settings.skill_level * costume * settings.benefit
-                  * (1 + charm) * settings.adx * theme
-                  * (1 + settings.up_bonus) * command * ct * eh
-                  * (1.2 if attacker.attack_stacks > 0 else 1.0))
+    factors = (('GVG', .1), (f'技能({skill.magnification:g}+Order追加{extra:g})', skill.magnification + extra),
+               ('时间成长', 1 + growth),
+               ('等级', settings.skill_level), ('衣装', costume), ('恩惠', settings.benefit),
+               ('CHARM', 1 + charm), ('ADX', settings.adx), ('主题', theme),
+               ('UP期望', 1 + settings.up_bonus), ('Order', command), ('CT', ct), ('EH', eh),
+               ('Mt增伤', 1.2 if attacker.attack_stacks > 0 else 1.0))
+    multiplier = math.prod(value for _, value in factors)
     _finite("合计伤害倍率", multiplier)
     return ModifierResult(
         multiplier=multiplier,
         received_multiplier=.7 if target.defense_stacks > 0 else 1.0,
         crit_rate=settings.crit_rate,
         notes=tuple(dict.fromkeys(notes)),
+        factors=factors,
     )

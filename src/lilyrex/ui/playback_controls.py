@@ -17,15 +17,19 @@ class DarkButton(tk.Label):
                          takefocus=True, highlightthickness=1,
                          highlightbackground='#3a3b5c', highlightcolor=ACCENT, **kwargs)
         self.command = command
-        self.bind('<Button-1>', lambda _: self.invoke())
-        self.bind('<Return>', lambda _: self.invoke())
-        self.bind('<space>', lambda _: self.invoke())
+        self.bind('<Button-1>', self._activate)
+        self.bind('<Return>', self._activate)
+        self.bind('<space>', self._activate)
         self.bind('<Enter>', lambda _: self.config(bg='#2d2e4a') if self['state'] != tk.DISABLED else None)
         self.bind('<Leave>', lambda _: self.config(bg=PANEL))
 
     def invoke(self):
         if self['state'] != tk.DISABLED:
             return self.command()
+
+    def _activate(self, _event=None) -> str:
+        self.invoke()
+        return 'break'
 
     def set_enabled(self, enabled: bool) -> None:
         self.config(state=tk.NORMAL if enabled else tk.DISABLED,
@@ -40,17 +44,25 @@ class PlaybackControls:
         self._last_status: PlaybackStatus | None = None
         self.row = tk.Frame(parent, bg=BG)
         self.row.pack()
+        self.btn_step_backward = DarkButton(self.row, '后退一步', lambda: self.step(-1))
+        self.btn_step_backward.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_step_forward = DarkButton(self.row, '前进一步', lambda: self.step(1))
+        self.btn_step_forward.pack(side=tk.LEFT, padx=(0, 6))
         self.btn_seek = DarkButton(self.row, '跳转时间', self.open_dialog)
         self.btn_seek.pack(side=tk.LEFT, padx=(0, 12))
         self.countdown = tk.Label(self.row, text='--:--', font=('Arial', 18, 'bold'),
                                   fg='#ffdd00', bg=BG)
         self.countdown.pack(side=tk.LEFT)
+        self.countdown.bind('<Button-1>', self._pause_click)
+        self.countdown.bind('<Return>', self._pause_click)
         self.btn_live = DarkButton(self.row, '回到直播', self.return_live)
         self.btn_live.pack(side=tk.LEFT, padx=(12, 0))
         self.status_label = tk.Label(parent, text='', bg=BG, fg=MUTED,
                                      font=('Arial', 9), height=1)
         self.status_label.pack()
         self.status_label.bind('<Button-1>', lambda _: self.open_dialog())
+        self._root = self.row.winfo_toplevel()
+        self._space_binding = self._root.bind('<space>', self._space_key, add='+')
         self.refresh()
 
     def refresh(self) -> None:
@@ -58,6 +70,10 @@ class PlaybackControls:
         if status == self._last_status and status is not None:
             return
         self._last_status = status
+        self.btn_step_backward.set_enabled(status is not None and status.can_step_backward)
+        self.btn_step_forward.set_enabled(status is not None and status.can_step_forward)
+        can_pause = status is not None and status.can_pause
+        self.countdown.config(cursor='hand2' if can_pause else '', takefocus=can_pause)
         self.btn_seek.set_enabled(status is not None and status.available_remaining is not None)
         self.btn_live.set_enabled(status is not None and status.mode != 'replay'
                                   and (status.mode == 'history' or status.seeking))
@@ -76,12 +92,58 @@ class PlaybackControls:
         mode = {'live': '直播', 'history': '回看', 'replay': '回放'}[status.mode]
         if status.seeking:
             return mode + ' · 正在跳转…'
-        if status.available_remaining is None and not status.source_complete:
+        if (status.available_remaining is None and not status.source_complete
+                and not status.can_pause and not status.paused):
             return mode + ' · 正在加载…'
+        if status.paused:
+            action = ' · ' + status.action_label if status.action_label else ''
+            hint = ' · 点击时间或空格继续' if status.can_pause else ''
+            return mode + ' · 已暂停' + action + hint
         if status.at_end and status.mode == 'replay':
             return mode + ' · 已结束，可跳转'
         # Full notices belong in the dialog; keep the header exactly one line.
-        return mode + (' · 时间提示，点击查看' if status.notice else '')
+        hint = ' · 点击时间或空格暂停' if status.can_pause else ''
+        return mode + (' · 时间提示，点击查看' if status.notice else '') + hint
+
+    def toggle_pause(self) -> None:
+        if self.playback is None or not self.playback.status().can_pause:
+            return
+        try:
+            self.playback.toggle_pause()
+        except ValueError as exc:
+            self.status_label.config(text=str(exc))
+            return
+        self.refresh()
+
+    def _pause_click(self, _event=None) -> str:
+        self.toggle_pause()
+        return 'break'
+
+    def _space_key(self, event) -> str | None:
+        if self.dialog is not None or event.widget.winfo_toplevel() is not self._root:
+            return None
+        if isinstance(event.widget, DarkButton) or event.widget.winfo_class() in {
+                'Entry', 'TEntry', 'Text', 'Spinbox', 'TSpinbox', 'TCombobox',
+                'Button', 'TButton', 'Checkbutton', 'TCheckbutton', 'Radiobutton',
+                'TRadiobutton', 'Listbox', 'Scale', 'TScale'}:
+            return None
+        if self.playback is None or not self.playback.status().can_pause:
+            return None
+        self.toggle_pause()
+        return 'break'
+
+    def step(self, direction: int) -> None:
+        if self.playback is None:
+            return
+        status = self.playback.status()
+        if not (status.can_step_backward if direction == -1 else status.can_step_forward):
+            return
+        try:
+            self.playback.step(direction)
+        except ValueError as exc:
+            self.status_label.config(text=str(exc))
+            return
+        self.refresh()
 
     @staticmethod
     def _range_text(status: PlaybackStatus) -> str:
@@ -171,3 +233,9 @@ class PlaybackControls:
 
     def destroy(self) -> None:
         self.close_dialog()
+        if self._space_binding is not None:
+            binding, self._space_binding = self._space_binding, None
+            try:
+                self._root.unbind('<space>', binding)
+            except tk.TclError:
+                pass

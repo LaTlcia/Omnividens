@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import logging
-from typing import Callable
+from typing import Callable, Literal, Mapping
 from lilyrex.domain.battle_time import BATTLE_SECONDS
 from lilyrex.domain.events import ReplayOptions
 from lilyrex.domain.playback import PlaybackStatus
@@ -19,6 +19,8 @@ class _Rebuild:
     through: int
     segment: int
     anchor: float
+    warmup: bool = True
+    emit_ordinal: int | None = None
 
 
 class PlaybackController:
@@ -41,6 +43,9 @@ class PlaybackController:
         self._ready = options is None
         self._anchor_clock = self._anchor_timeline = 0.0
         self._notice = ''
+        self._paused = False
+        self._paused_at: float | None = None
+        self._action_label = ''
         self._incomplete = bool(options and not options.warmup)
         self.consumed_events = self.warmup_events = 0
 
@@ -65,8 +70,64 @@ class PlaybackController:
             notice = '预热关闭，记牌可能不完整'
         elif end:
             notice = '播放结束，可跳转时间'
+        navigable = (self._ready and self.mode != 'live' and self._rebuild is None
+                     and self._segment >= 0)
+        previous = following = None
+        if navigable:
+            previous = self.timeline.resolve_step(self._cursor, -1, self._segment)
+            following = self.timeline.resolve_step(self._cursor, 1, self._segment)
         return PlaybackStatus(self.mode, remaining, available, self._rebuild is not None,
-                              end, self.timeline.complete, notice)
+                              end, self.timeline.complete, notice, paused=self._paused,
+                              can_pause=navigable and not end,
+                              can_step_backward=previous is not None,
+                              can_step_forward=following is not None,
+                              action_label=self._action_label)
+
+    def toggle_pause(self) -> None:
+        if not self.status().can_pause:
+            raise ValueError('当前状态不能暂停或继续，请等待加载完成或先进入回看')
+        now = self.clock.monotonic()
+        if self._paused:
+            self._anchor_clock += now - self._paused_at
+            self._paused, self._paused_at = False, None
+            self._action_label = ''
+        else:
+            self._paused, self._paused_at = True, now
+        logging.getLogger('lilyrex.playback').info('pause mode=%s paused=%s', self.mode, self._paused)
+
+    def step(self, direction: Literal[-1, 1]) -> int:
+        if type(direction) is not int or direction not in (-1, 1):
+            raise ValueError('步进方向必须是-1或1')
+        if self.mode == 'live' or not self._ready or self._rebuild is not None or self._segment < 0:
+            raise ValueError('当前状态不能步进，请等待加载完成或先进入回看')
+        target = self.timeline.resolve_step(self._cursor, direction, self._segment)
+        if target is None:
+            raise ValueError('没有上一个动作' if direction < 0 else '没有下一个动作')
+        if direction > 0:
+            # All mutable state is private until the entire suffix succeeds.
+            session = self.view_session.fork_for_view()
+            self._generation += 1
+            self._rebuild = _Rebuild(session, self._cursor, target.ordinal,
+                                     target.segment_id, target.timeline_seconds, warmup=False)
+        else:
+            self._begin(target.ordinal, target.segment_id, target.timeline_seconds)
+            self._rebuild.emit_ordinal = target.action_ordinal
+        self._paused, self._paused_at = True, self.clock.monotonic()
+        self._action_label = target.label
+        if target.action_ordinal is not None:
+            entries = self.timeline.read(target.action_ordinal - 1, target.action_ordinal, 1)
+            if entries:
+                payload = entries[0].event.payload
+                actor_id = payload.get('actionUserId') or payload.get('userId')
+                actor_id = actor_id or next((row.get('actionUserId')
+                    for row in (payload.get('influence') or ())
+                    if isinstance(row, Mapping) and row.get('actionUserId')), None)
+                actor = self.view_session.snapshot.players.get(actor_id) if type(actor_id) is int else None
+                if actor is not None:
+                    self._action_label = f'{actor.name[:18]} · {target.label}'
+        logging.getLogger('lilyrex.playback').info('step request=%s direction=%s ordinal=%s',
+                                                  self._generation, direction, target.ordinal)
+        return self._generation
 
     def _begin(self, through: int, segment: int, anchor: float) -> None:
         self._generation += 1
@@ -80,6 +141,7 @@ class PlaybackController:
         segment = self._segment if self.options and self._segment >= 0 else None
         point, notice = self.timeline.resolve_remaining(seconds, segment)
         self._notice = notice
+        self._action_label = ''
         if self.options is None:
             self.mode = 'history'
             self.live_session.drain_hp_events()
@@ -92,10 +154,13 @@ class PlaybackController:
             raise ValueError('离线回放不能回到直播')
         self._generation += 1
         self._rebuild = None
+        self._paused, self._paused_at = False, None
+        self._action_label = ''
         self.live_session.drain_hp_events()
         self.view_session = self.live_session
         self._cursor, self._segment = self._live_cursor, self._live_segment
         self.mode, self._notice = 'live', ''
+        self._incomplete = False
 
     def _consume(self, session: BattleSession, entry, warmup: bool) -> None:
         session.consume(entry.event, warmup=warmup)
@@ -146,7 +211,7 @@ class PlaybackController:
             if not entries:
                 raise RuntimeError('历史缓存缺少已提交事件')
             for entry in entries:
-                self._consume(job.session, entry, True)
+                self._consume(job.session, entry, job.warmup and entry.ordinal != job.emit_ordinal)
                 job.cursor = entry.ordinal
                 handled += 1
                 if self.clock.monotonic() >= deadline:
@@ -157,6 +222,7 @@ class PlaybackController:
             # Start the playback clock only after reconstruction has completed.
             self._anchor_timeline = job.anchor
             self._anchor_clock = self.clock.monotonic()
+            self._paused_at = self._anchor_clock if self._paused else None
             self._rebuild = None
 
     def _advance_view(self, deadline: float) -> None:
@@ -176,6 +242,7 @@ class PlaybackController:
                     self._segment = entry.segment_id
                 self._consume(self.view_session, entry, False)
                 self._cursor = entry.ordinal
+                self._action_label = ''
                 handled += 1
                 if self.clock.monotonic() >= deadline:
                     return
@@ -196,5 +263,7 @@ class PlaybackController:
             self._start_replay()
         if self._rebuild is not None:
             self._advance_rebuild(deadline)
+            return
+        if self._paused:
             return
         self._advance_view(deadline)

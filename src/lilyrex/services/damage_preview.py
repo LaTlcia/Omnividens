@@ -7,12 +7,14 @@ from typing import Callable, Mapping
 from lilyrex.domain.attributes import attribute_value
 from lilyrex.domain.buff_scaling import effective_attack, effective_defense
 from lilyrex.domain.damage import estimate_damage
+from lilyrex.domain.damage_trace import damage_trace
 from lilyrex.domain.models import (ActiveOrder, BattleSnapshot, DamageCatalog, DamageEstimate,
                                    EstimateSettings, PreviewResult)
 from lilyrex.domain.modifiers import calculate_modifiers
 from lilyrex.domain.orders import resolve_orders
 from lilyrex.domain.passives import estimate_passives
 from lilyrex.domain.passive_models import PassivePoolSettings
+from lilyrex.domain.skill_conditions import element_condition
 from lilyrex.services.passive_pool import PassivePool
 
 
@@ -47,6 +49,11 @@ class DamagePreviewService:
         actor = self.snapshot.players.get(user_id)
         if actor is None or actor.stats is None:
             return PreviewResult(**base, error="当前快照缺少攻击者基础面板")
+        try:
+            condition = element_condition(skill, actor.last_attribute)
+        except ValueError:
+            return PreviewResult(**base, error='技能属性条件参数无效')
+        base['targets'] = condition.targets
         notes = [*self.snapshot.warnings]
         settings = self.settings_for(user_id)
         passive_settings = self.passive_settings_for(user_id) if self.passive_settings_for else None
@@ -97,6 +104,10 @@ class DamagePreviewService:
                         resolved_orders.append((ActiveOrder(active.guild_id, additional.effect_id,
                             active.start, active.end, is_dual=True, parent_effect_id=active.effect_id), additional))
         estimates: list[DamageEstimate] = []
+        calculation: list[str] = [
+            '当前状态下次使用的预估；不是刚才该次攻击的实伤复算。',
+            *condition.notes,
+        ]
         for target in live:
             if target.stats is None:
                 notes.append(f"#{target.rank}缺少防御面板，未估计")
@@ -122,12 +133,15 @@ class DamagePreviewService:
             notes.extend(factors.notes)
             estimates.append(DamageEstimate(target.user_id, target.rank, target.name, damage.expected,
                                              damage.minimum, damage.maximum, attack, defense, target is locked))
+            calculation.extend(damage_trace(skill, actor, target, attack, defense, factors, damage))
         def priority(note: str) -> int:
             # The compact tooltip truncates its notes: keep the current card's
             # attribute and time-dependent growth visible before longer details.
             if '属性主题×' in note:
                 return -2
             if note.startswith('蓄力第') or '蓄力按最低档' in note:
+                return -1
+            if '：EH ' in note or '：SD ' in note or '：MN ' in note:
                 return -1
             if '追加状态' in note or '不匹配' in note:
                 return 0
@@ -141,5 +155,12 @@ class DamagePreviewService:
                 return 4
             return 5
         ordered_notes = tuple(sorted(dict.fromkeys(notes), key=priority))
+        calculation.extend((
+            'A/D含层数估计；各系数为实际代入值。显示至6位小数，内部使用binary64。',
+            '0.95 = 伤害随机系数期望；100.5 = RandInt(1,200)期望。'
+            'E忽略最后一次向下取整，单此项误差小于1点。',
+            '随机上下界固定UP期望，未覆盖所有被动发动组合。',
+        ))
         return PreviewResult(**base, estimates=tuple(estimates), assumptions=ordered_notes,
-                             error=None if estimates else "敌前排缺少可用防御面板")
+                             error=None if estimates else "敌前排缺少可用防御面板",
+                             calculation=tuple(calculation) + ('计算依据与未计入项',) + ordered_notes)

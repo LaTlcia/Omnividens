@@ -53,6 +53,7 @@ class GameStyleGUI(WindowLayout, BattleFooter):
                                                 delay_ms=hover_delay_ms)
         self.deck_console.on_hover = self._on_damage_hover
         self.deck_console.on_hover_end = self._hide_damage_preview
+        self.deck_console.on_hover_leave = self._leave_damage_preview
         root.bind("<Destroy>", self._on_destroy, add="+")
         self.poll_cmd_status()
 
@@ -73,7 +74,9 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         if session is self.session:
             return
         self._hide_damage_preview()
-        self.hp_log.clear()
+        continues = getattr(session, 'continues', None)
+        if not callable(continues) or not continues(self.session):
+            self.hp_log.clear()
         for column in self.cols:
             for panel in column['panels']:
                 if hasattr(panel, 'cancel_hp_animation'):
@@ -86,7 +89,6 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         self._clock = None
         self._users_by_uid, self._panel_by_uid = {}, {}
         self.deck_console.show(None, None, self.deck)
-        session.drain_hp_events()
         if self.presenter.view() is None:
             self.selected_uid = None
             self.lbl_countdown.config(text='--:--')
@@ -202,6 +204,10 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         if self.damage_tooltip is not None:
             self.damage_tooltip.hide()
 
+    def _leave_damage_preview(self):
+        if self.damage_tooltip is not None:
+            self.damage_tooltip.leave()
+
     def _refresh_damage_preview(self):
         if self.damage_tooltip is None or self._damage_hover is None:
             return
@@ -233,6 +239,8 @@ class GameStyleGUI(WindowLayout, BattleFooter):
     def _battle_clock(self):
         if self._clock is None:
             return "--:--"
+        if self.playback is not None and self.playback.status().mode != 'live':
+            return format_remaining(max(0, BATTLE_SECONDS - self.session.snapshot.elapsed_seconds))
         elapsed, observed = self._clock
         remaining = max(0, BATTLE_SECONDS - elapsed - min(time.monotonic() - observed, 1.5))
         return format_remaining(remaining)

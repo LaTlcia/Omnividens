@@ -40,6 +40,8 @@ class WindowLayout:
         self.lbl_countdown = self.playback_controls.countdown
         self.btn_seek = self.playback_controls.btn_seek
         self.btn_live = self.playback_controls.btn_live
+        self.btn_step_backward = self.playback_controls.btn_step_backward
+        self.btn_step_forward = self.playback_controls.btn_step_forward
 
         self.btn_swap = tk.Button(center, text="Swap View", command=self.swap_view, bg="#ffdd00")
         self.btn_swap.pack()

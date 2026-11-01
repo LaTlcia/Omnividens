@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from lilyrex.domain.charge import charge_bonus
+from lilyrex.domain.masterdata import GENERATOR_SCHEMA
 from lilyrex.domain.models import DamageSkill, OrderEffect
 
 FILES = {name: f"masterdata_api_mst_get{name}MstList.json" for name in
@@ -19,6 +20,37 @@ FILES = {name: f"masterdata_api_mst_get{name}MstList.json" for name in
 def parameters(row: dict[str, Any]) -> dict[str, Any]:
     value = row.get("parameterText") or {}
     return json.loads(value) if isinstance(value, str) else value
+
+
+def _element_skill(value: Any) -> tuple[tuple[int, ...], float, bool, float, tuple[str, ...]]:
+    """Preserve the previous-card condition separately from its three effects."""
+    if not isinstance(value, dict):
+        raise ValueError('Invalid ELEMENT_SKILL object')
+    if not value:
+        return (), 1.0, False, 1.0, ()
+    attributes = value.get('ELEMENT_ATTRIBUTES')
+    if (not isinstance(attributes, list) or not attributes
+            or any(type(item) is not int or not 1 <= item <= 5 for item in attributes)
+            or len(attributes) != len(set(attributes))):
+        raise ValueError('Invalid ELEMENT_ATTRIBUTES')
+
+    def number(key: str, default: float) -> float:
+        raw = value.get(key, default)
+        if (isinstance(raw, bool) or not isinstance(raw, (int, float))
+                or not math.isfinite(raw) or raw < 0):
+            raise ValueError(f'Invalid element coefficient: {key}')
+        return float(raw)
+
+    eh = 1 + number('ELEMENT_ADD_MAGNIFICATION', 0)
+    sp = number('ELEMENT_USE_SP', 1)
+    if not math.isfinite(eh) or not 0 < sp <= 1:
+        raise ValueError('Invalid element multiplier')
+    spread = value.get('ELEMENT_ADD_TARGET_NUM', 0)
+    if type(spread) is not int or spread < 0:
+        raise ValueError('Invalid ELEMENT_ADD_TARGET_NUM')
+    known = {'ELEMENT_ATTRIBUTES', 'ELEMENT_ADD_MAGNIFICATION', 'ELEMENT_ADD_TARGET_NUM', 'ELEMENT_USE_SP'}
+    unsupported = tuple(f'特殊属性技能参数未计入：{key}' for key in value if key not in known)
+    return tuple(attributes), eh, spread > 0, sp, unsupported
 
 
 def damage_skill(card: dict[str, Any], skill: dict[str, Any], card_type: int) -> DamageSkill:
@@ -31,14 +63,9 @@ def damage_skill(card: dict[str, Any], skill: dict[str, Any], card_type: int) ->
     targets = p["TARGET_NUM"]
     lo, hi = (int(targets["min"]), int(targets["max"])) if isinstance(targets, dict) else (int(targets), int(targets))
     unsupported: list[str] = []
-    element = p.get("ELEMENT_SKILL") or {}
-    eh = 1.0
-    if element.get("ELEMENT_ADD_MAGNIFICATION"):
-        if element.get("ELEMENT_ATTRIBUTES") == [card["attribute"]]:
-            eh += float(element["ELEMENT_ADD_MAGNIFICATION"])
-        else:
-            unsupported.append("特殊EH属性条件未计入")
-    if element.get("ELEMENT_ADD_TARGET_NUM") or "TACTICS_ACTIVATED_TARGET_NUM" in p:
+    attributes, eh, spread, sp, element_unsupported = _element_skill(p.get('ELEMENT_SKILL', {}))
+    unsupported.extend(element_unsupported)
+    if "TACTICS_ACTIVATED_TARGET_NUM" in p:
         unsupported.append("目标数显示原始范围，条件扩展未计入")
     known = {"ATTACK_TYPE", "ATTACK_MAGNIFICATION", "TARGET_NUM", "ELEMENT_SKILL", "STACK_SKILLS",
              "ADD_MAGNIFICATION_BY_TACTICS", "EFFECT_UP_TACTICS", "ADD_MAGNIFICATION_AT_LOSING",
@@ -60,7 +87,8 @@ def damage_skill(card: dict[str, Any], skill: dict[str, Any], card_type: int) ->
         max_charge_bonus=maximum, min_charge_bonus=minimum,
         charge_interval_seconds=interval, charge_full_seconds=full,
         eh_multiplier=eh, ct_multiplier=1 + float(p.get("ADD_MAGNIFICATION_AT_LOSING", 0)),
-        unsupported=tuple(dict.fromkeys(unsupported)))
+        unsupported=tuple(dict.fromkeys(unsupported)), element_attributes=attributes,
+        spread_max_targets=spread, element_sp_multiplier=sp)
 
 
 def order_effect(row: dict[str, Any]) -> OrderEffect:
@@ -144,7 +172,7 @@ def build(source: Path) -> dict[str, Any]:
             raise ValueError("Front card has no supported damage definition")
         compiled.append(asdict(damage_skill(cards[cid], skills[sid], ct)))
     orders = [asdict(order_effect(r)) for r in sorted(rows["TacticsEffect"], key=lambda r: r["tacticsEffectMstId"])]
-    return {"schema_version": 3, "source_sha256": hashes,
+    return {"schema_version": GENERATOR_SCHEMA, "source_sha256": hashes,
             "formula_reference": "ArayaToolbox/method/generate_agamotto.py",
             "skills": compiled, "orders": orders}
 

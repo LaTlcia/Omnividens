@@ -8,6 +8,7 @@ from tkinter import font as tkfont
 from typing import Any, Callable
 
 from lilyrex.domain.models import DamageEstimate, PreviewResult
+from .formula_view import FormulaView
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,8 @@ class DamageTooltip:
     """One reusable, non-focusing tooltip, driven exclusively by the Tk thread."""
 
     WIDTH = 340
+    FORMULA_WIDTH = 480
+    LEAVE_DELAY_MS = 240
     MAX_TARGETS = 5
     ATTRIBUTES = {1: "火", 2: "水", 3: "風", 4: "光", 5: "闇"}
 
@@ -42,11 +45,13 @@ class DamageTooltip:
         self._key: tuple | None = None
         self._provider: Callable[[], PreviewResult] | None = None
         self._after_id: str | None = None
+        self._leave_id: str | None = None
         self._position = (0, 0)
         self._visible = False
         self._destroyed = False
         self._last_result: PreviewResult | None = None
         self._image: Any = None
+        self.formula_view: FormulaView | None = None
 
         self.window = tk.Toplevel(root, takefocus=False)
         self.window.withdraw()
@@ -60,6 +65,8 @@ class DamageTooltip:
         self.window.configure(bg=self.theme.border)
         self.window.transient(root.winfo_toplevel())
         self.window.protocol("WM_DELETE_WINDOW", self.hide)
+        self.window.bind("<Enter>", lambda _event: self._cancel_leave())
+        self.window.bind("<Leave>", lambda _event: self.leave())
         self._font = tkfont.Font(
             root=self.window, family=self.theme.font_name, size=9
         )
@@ -83,6 +90,7 @@ class DamageTooltip:
         """Delay a new card; moving within the same card never restarts its timer."""
         if self._destroyed:
             return
+        self._cancel_leave()
         self._position = (int(x_root), int(y_root))
         if key == self._key:
             self._provider = provider
@@ -103,6 +111,7 @@ class DamageTooltip:
             self._place()
 
     def hide(self) -> None:
+        self._cancel_leave()
         if self._after_id is not None:
             try:
                 self.root.after_cancel(self._after_id)
@@ -112,11 +121,43 @@ class DamageTooltip:
         self._key = self._provider = None
         self._last_result = None
         self._visible = False
+        self.formula_view = None
         if not self._destroyed:
             try:
                 self.window.withdraw()
             except tk.TclError:
                 pass
+
+    def leave(self) -> None:
+        """Allow crossing the gap from a card to this popup before dismissing."""
+        self._cancel_leave()
+        if not self.visible:
+            self.hide()
+            return
+        self._leave_id = self.root.after(self.LEAVE_DELAY_MS, self._dismiss_if_outside)
+
+    def _cancel_leave(self) -> None:
+        if self._leave_id is not None:
+            try:
+                self.root.after_cancel(self._leave_id)
+            except tk.TclError:
+                pass
+            self._leave_id = None
+
+    def _pointer_inside(self) -> bool:
+        if not self.visible:
+            return False
+        try:
+            x, y = self.window.winfo_pointerxy()
+            left, top = self.window.winfo_rootx(), self.window.winfo_rooty()
+            return left <= x < left + self.window.winfo_width() and top <= y < top + self.window.winfo_height()
+        except tk.TclError:
+            return False
+
+    def _dismiss_if_outside(self) -> None:
+        self._leave_id = None
+        if not self._pointer_inside():
+            self.hide()
 
     def destroy(self) -> None:
         if self._destroyed:
@@ -192,17 +233,20 @@ class DamageTooltip:
         return all(math.isfinite(v) for v in values)
 
     def _render(self, result: PreviewResult) -> None:
+        scroll_position = self.formula_view.text.yview()[0] if self.formula_view is not None else 0.0
+        first_visible = self.formula_view.text.index('@0,0') if self.formula_view is not None else '1.0'
         self._last_result = result
         for child in self._content.winfo_children():
             child.destroy()
         self._image = None
+        self.formula_view = None
         screen_w = self.window.winfo_screenwidth()
-        width = min(self.WIDTH, max(160, screen_w - 16))
+        width = min(self.FORMULA_WIDTH if result.calculation else self.WIDTH, max(160, screen_w - 16))
         text_width = width - 28
 
         header = tk.Frame(self._content, bg=self.theme.header)
         header.pack(fill=tk.X)
-        self._label(header, "预计伤害 · 每个目标", color=self.theme.muted,
+        self._label(header, "预计伤害 · 当前状态下次使用 · 每个目标", color=self.theme.muted,
                     size=8, bg=self.theme.header).pack(anchor="w", padx=10, pady=(6, 0))
         self._label(
             header, self._lines(result.card_name or "伤害预估", text_width, 2, title=True),
@@ -248,7 +292,18 @@ class DamageTooltip:
                     size=8, color=self.theme.muted,
                 ).pack(anchor="w", pady=(2, 0))
 
-        if result.assumptions:
+        if result.calculation:
+            tk.Frame(self._content, height=1, bg=self.theme.border).pack(fill=tk.X, padx=10)
+            self._label(self._content, "完整计算公式 · 移入浮窗后滚轮查看", color="#8ce1d5",
+                        size=8).pack(anchor="w", padx=10, pady=(5, 0))
+            self.window.update_idletasks()
+            # Leave room for desktop menu bars; macOS clamps help windows below
+            # its menu even when their requested y position is only 8 pixels.
+            available = self.window.winfo_screenheight() - self._content.winfo_reqheight() - 56
+            self.formula_view = FormulaView(self._content, self.theme, height=max(40, min(360, available)))
+            self.formula_view.frame.pack(fill=tk.BOTH, expand=True, padx=3, pady=(2, 5))
+            self.formula_view.set_content(result.calculation, scroll_position)
+        elif result.assumptions:
             tk.Frame(self._content, height=1, bg=self.theme.border).pack(fill=tk.X, padx=10)
             # At 340 px this stays compact while preserving service-provided priorities.
             notes = "估计口径：" + "；".join(result.assumptions)
@@ -258,8 +313,14 @@ class DamageTooltip:
                 color=self.theme.muted, size=8,
             ).pack(anchor="w", padx=10, pady=(5, 7))
         self.window.update_idletasks()
-        height = min(self._content.winfo_reqheight() + 2, self.window.winfo_screenheight() - 16)
+        height = min(self._content.winfo_reqheight() + 2, self.window.winfo_screenheight() - 48)
         self.window.geometry(f"{width}x{max(40, height)}")
+        self.window.update_idletasks()
+        if self.formula_view is not None:
+            # A text fraction uses Tk's estimated total wrapped-line height,
+            # which can change while the replacement widget is laid out.
+            # Preserve the actual top character after final geometry instead.
+            self.formula_view.text.yview(first_visible)
 
     def _target_row(self, parent: tk.Misc, estimate: DamageEstimate, width: int) -> None:
         row = tk.Frame(parent, bg=self.theme.bg)
@@ -276,12 +337,15 @@ class DamageTooltip:
         self.window.update_idletasks()
         width, height = self.window.winfo_width(), self.window.winfo_height()
         screen_w, screen_h = self.window.winfo_screenwidth(), self.window.winfo_screenheight()
-        pointer_x, pointer_y = self._position
-        x, y = pointer_x + 16, pointer_y + 18
-        if x + width > screen_w - 8:
-            x = pointer_x - width - 12
-        if y + height > screen_h - 8:
-            y = pointer_y - height - 12
+        if self._pointer_inside():
+            x, y = self.window.winfo_x(), self.window.winfo_y()
+        else:
+            pointer_x, pointer_y = self._position
+            x, y = pointer_x + 16, pointer_y + 18
+            if x + width > screen_w - 8:
+                x = pointer_x - width - 12
+            if y + height > screen_h - 8:
+                y = pointer_y - height - 12
         x = max(8, min(x, screen_w - width - 8))
         y = max(8, min(y, screen_h - height - 8))
         self.window.geometry(f"+{x}+{y}")

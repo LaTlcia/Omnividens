@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ContextManager, Literal, Mapping, Protocol
 
-GENERATOR_SCHEMA = 3
+GENERATOR_SCHEMA = 4
 SOURCE_FILES = tuple(f'masterdata_api_mst_get{name}MstList.json' for name in (
     'Tactics', 'TacticsEffect', 'CharacterJob', 'Character', 'Skill', 'Weapon',
     'CharacterJobSkill', 'CharacterJobSpecialSkill', 'CharacterJobSpecialSkillEffect',

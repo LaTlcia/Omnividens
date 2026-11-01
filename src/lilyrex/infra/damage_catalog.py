@@ -67,6 +67,12 @@ def _validate_skill(skill: DamageSkill) -> None:
     _number(skill.add_magnification)
     for value in skill.tactics_types:
         _integer(value, 1)
+    for value in skill.element_attributes:
+        _integer(value, 1, 5)
+    if (len(skill.element_attributes) != len(set(skill.element_attributes))
+            or type(skill.spread_max_targets) is not bool):
+        raise ValueError('属性条件或范围字段无效')
+    _number(skill.element_sp_multiplier, positive=True, maximum=1)
     charge_bonus(None, minimum=skill.min_charge_bonus, maximum=skill.max_charge_bonus,
                  interval_seconds=skill.charge_interval_seconds, full_seconds=skill.charge_full_seconds)
 
@@ -116,7 +122,7 @@ class LocalDamageCatalog:
         source = path if path is not None else files("lilyrex").joinpath("data/damage_catalog.json")
         try:
             data = json.loads(source.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-            if type(data["schema_version"]) is not int or data["schema_version"] not in (1, 2, 3):
+            if type(data["schema_version"]) is not int or data["schema_version"] not in (1, 2, 3, 4):
                 raise ValueError
             self.source_sha256 = _hashes(data["source_sha256"])
             if not isinstance(data['skills'], list) or not isinstance(data['orders'], list):
@@ -124,15 +130,25 @@ class LocalDamageCatalog:
             self._skills: dict[tuple[int, int], DamageSkill] = {}
             for item in data["skills"]:
                 item = dict(item)
-                if data['schema_version'] == 3 and not all(name in item for name in (
+                if data['schema_version'] >= 3 and not all(name in item for name in (
                     'min_charge_bonus', 'charge_interval_seconds', 'charge_full_seconds')):
+                    raise ValueError
+                if data['schema_version'] == 4 and not all(name in item for name in (
+                    'element_attributes', 'spread_max_targets', 'element_sp_multiplier')):
                     raise ValueError
                 item["unsupported"] = _strings(item.get("unsupported", []))
                 if not isinstance(item.get('tactics_types', []), list):
                     raise ValueError
                 item["tactics_types"] = tuple(item.get("tactics_types", ()))
+                if not isinstance(item.get('element_attributes', []), list):
+                    raise ValueError
+                item['element_attributes'] = tuple(item.get('element_attributes', ()))
                 skill = DamageSkill(**item)
                 _validate_skill(skill)
+                if (data['schema_version'] == 4 and not skill.element_attributes
+                        and (skill.eh_multiplier != 1 or skill.spread_max_targets
+                             or skill.element_sp_multiplier != 1)):
+                    raise ValueError
                 key = (skill.card_id, skill.skill_id)
                 if key in self._skills:
                     raise ValueError

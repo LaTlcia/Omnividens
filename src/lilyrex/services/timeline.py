@@ -3,9 +3,11 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 import math
 from threading import RLock
+from typing import Literal
+from lilyrex.domain.action_steps import ActionMarker, action_label
 from lilyrex.domain.battle_time import BATTLE_SECONDS, BattleTimeMap, format_remaining
 from lilyrex.domain.events import BattleEvent
-from lilyrex.domain.playback import TimelineEntry, TimelinePoint, TimelineStore
+from lilyrex.domain.playback import StepTarget, TimelineEntry, TimelinePoint, TimelineStore
 
 
 class TimelineService:
@@ -17,6 +19,7 @@ class TimelineService:
         self._starts: dict[int, int] = {0: 1}
         self._known: dict[int, list[TimelinePoint]] = {0: []}
         self._elapsed: dict[int, list[float]] = {0: []}
+        self._actions: dict[int, list[ActionMarker]] = {0: []}
         self._segment = 0
         self._complete = False
         self._mapping = BattleTimeMap()
@@ -53,14 +56,18 @@ class TimelineService:
             ordinal = len(self._points) + 1
             segment = self._segment + int(new_battle)
             point = TimelinePoint(ordinal, segment, timeline_seconds, mapping.elapsed, gap)
+            label = action_label(event)
             # Publish only the committed prefix. Storage failures leave metadata unchanged.
             self.store.append(TimelineEntry(ordinal, segment, event, timeline_seconds, mapping.elapsed))
             if new_battle:
                 self._starts[segment] = ordinal
                 self._known[segment], self._elapsed[segment] = [], []
+                self._actions[segment] = []
             self._segment, self._mapping, self._last_key = segment, mapping, key
             self._points.append(point)
             self._times.append(timeline_seconds)
+            if label is not None:
+                self._actions[segment].append(ActionMarker(ordinal, label))
             if point.battle_elapsed is not None:
                 self._known[segment].append(point)
                 self._elapsed[segment].append(point.battle_elapsed)
@@ -121,6 +128,42 @@ class TimelineService:
         with self._lock:
             through = min(through, len(self._points))
         return self.store.read(after, through, limit)
+
+    def resolve_step(self, cursor: int, direction: Literal[-1, 1],
+                     segment: int) -> StepTarget | None:
+        """Stop exactly after one selected player action, within its segment.
+
+        Synchronization before that action is consumed in order; later frames
+        belong to the next step or resumed playback. Backward restores the
+        previous action itself, without importing its following snapshots.
+        The lock fixes the selected action while reception may continue.
+        """
+        if (type(direction) is not int or direction not in (-1, 1)
+                or type(cursor) is not int or type(segment) is not int):
+            raise ValueError('单步方向或游标无效')
+        with self._lock:
+            if segment not in self._starts:
+                raise ValueError('单步比赛分段无效')
+            start = self._starts[segment]
+            end = self._starts.get(segment + 1, len(self._points) + 1) - 1
+            if not start - 1 <= cursor <= end:
+                raise ValueError('单步游标不在当前比赛分段')
+            actions = self._actions[segment]
+            next_index = bisect_right(actions, cursor, key=lambda action: action.ordinal)
+            if direction == 1:
+                if next_index >= len(actions):
+                    return None
+                selected = actions[next_index]
+                through = selected.ordinal
+            else:
+                if next_index == 0:
+                    return None
+                selected = actions[next_index - 2] if next_index >= 2 else None
+                through = selected.ordinal if selected else actions[0].ordinal - 1
+            anchor = self._points[max(start, through) - 1].timeline_seconds
+            return StepTarget(through, segment, anchor,
+                              selected.ordinal if selected else None,
+                              selected.label if selected else '动作开始前')
 
     def initial_cursor(self, start_seconds: float) -> int:
         """Last ordinal strictly before a CLI recording-time offset, or zero."""

@@ -74,7 +74,7 @@ def run_gui(source: EventSource, config, resources, new_session: Callable[[], Ba
                 gui.refresh()
                 renders += gui._last_revision != revision
                 status = playback.status()
-                if options and not hold and status.at_end:
+                if options and not hold and status.at_end and not status.paused:
                     root.quit()
                     return
                 root.after(10, poll)

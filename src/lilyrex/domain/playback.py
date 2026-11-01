@@ -24,6 +24,15 @@ class TimelinePoint:
 
 
 @dataclass(frozen=True)
+class StepTarget:
+    ordinal: int
+    segment_id: int
+    timeline_seconds: float
+    action_ordinal: int | None
+    label: str
+
+
+@dataclass(frozen=True)
 class PlaybackStatus:
     mode: Literal['live', 'history', 'replay']
     remaining_seconds: float | None = None
@@ -32,6 +41,11 @@ class PlaybackStatus:
     at_end: bool = False
     source_complete: bool = False
     notice: str = ''
+    paused: bool = False
+    can_pause: bool = False
+    can_step_backward: bool = False
+    can_step_forward: bool = False
+    action_label: str = ''
 
 
 class TimelineStore(Protocol):
@@ -45,3 +59,5 @@ class PlaybackPort(Protocol):
     def status(self) -> PlaybackStatus: ...
     def seek_remaining(self, seconds: int) -> int: ...
     def return_live(self) -> None: ...
+    def toggle_pause(self) -> None: ...
+    def step(self, direction: Literal[-1, 1]) -> int: ...
