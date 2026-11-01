@@ -1,0 +1,173 @@
+"""Dark themed time navigation controls; only the viewing port is exposed."""
+from __future__ import annotations
+import tkinter as tk
+
+from lilyrex.domain.battle_time import format_remaining, parse_remaining
+from lilyrex.domain.playback import PlaybackPort, PlaybackStatus
+
+BG, PANEL, TEXT, MUTED, ACCENT = '#16213e', '#23243a', '#e0e0f0', '#8a8fb3', '#00d4ff'
+
+
+class DarkButton(tk.Label):
+    """Keyboard accessible flat control with identical colors on Aqua and Windows."""
+    def __init__(self, parent, text: str, command, **kwargs):
+        super().__init__(parent, text=text, bg=PANEL, fg=ACCENT,
+                         disabledforeground='#626780', font=('Arial', 10, 'bold'),
+                         padx=10, pady=5, bd=1, relief=tk.FLAT,
+                         takefocus=True, highlightthickness=1,
+                         highlightbackground='#3a3b5c', highlightcolor=ACCENT, **kwargs)
+        self.command = command
+        self.bind('<Button-1>', lambda _: self.invoke())
+        self.bind('<Return>', lambda _: self.invoke())
+        self.bind('<space>', lambda _: self.invoke())
+        self.bind('<Enter>', lambda _: self.config(bg='#2d2e4a') if self['state'] != tk.DISABLED else None)
+        self.bind('<Leave>', lambda _: self.config(bg=PANEL))
+
+    def invoke(self):
+        if self['state'] != tk.DISABLED:
+            return self.command()
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.config(state=tk.NORMAL if enabled else tk.DISABLED,
+                    cursor='hand2' if enabled else '', bg=PANEL, takefocus=enabled)
+
+
+class PlaybackControls:
+    def __init__(self, parent, playback: PlaybackPort | None):
+        self.playback = playback
+        self.dialog = None
+        self.input_var = self.error_var = None
+        self._last_status: PlaybackStatus | None = None
+        self.row = tk.Frame(parent, bg=BG)
+        self.row.pack()
+        self.btn_seek = DarkButton(self.row, '跳转时间', self.open_dialog)
+        self.btn_seek.pack(side=tk.LEFT, padx=(0, 12))
+        self.countdown = tk.Label(self.row, text='--:--', font=('Arial', 18, 'bold'),
+                                  fg='#ffdd00', bg=BG)
+        self.countdown.pack(side=tk.LEFT)
+        self.btn_live = DarkButton(self.row, '回到直播', self.return_live)
+        self.btn_live.pack(side=tk.LEFT, padx=(12, 0))
+        self.status_label = tk.Label(parent, text='', bg=BG, fg=MUTED,
+                                     font=('Arial', 9), height=1)
+        self.status_label.pack()
+        self.status_label.bind('<Button-1>', lambda _: self.open_dialog())
+        self.refresh()
+
+    def refresh(self) -> None:
+        status = self.playback.status() if self.playback is not None else None
+        if status == self._last_status and status is not None:
+            return
+        self._last_status = status
+        self.btn_seek.set_enabled(status is not None and status.available_remaining is not None)
+        self.btn_live.set_enabled(status is not None and status.mode != 'replay'
+                                  and (status.mode == 'history' or status.seeking))
+        if status is None:
+            self.status_label.config(text='')
+            return
+        self.status_label.config(text=self._status_text(status),
+                                 fg=ACCENT if status.mode == 'live' else MUTED,
+                                 cursor='hand2' if status.available_remaining is not None else '')
+        if self.dialog is not None:
+            self.range_label.config(text=self._range_text(status))
+            self.notice_label.config(text=status.notice)
+
+    @staticmethod
+    def _status_text(status: PlaybackStatus) -> str:
+        mode = {'live': '直播', 'history': '回看', 'replay': '回放'}[status.mode]
+        if status.seeking:
+            return mode + ' · 正在跳转…'
+        if status.available_remaining is None and not status.source_complete:
+            return mode + ' · 正在加载…'
+        if status.at_end and status.mode == 'replay':
+            return mode + ' · 已结束，可跳转'
+        # Full notices belong in the dialog; keep the header exactly one line.
+        return mode + (' · 时间提示，点击查看' if status.notice else '')
+
+    @staticmethod
+    def _range_text(status: PlaybackStatus) -> str:
+        if status.available_remaining is None:
+            return '暂无可跳转的数据'
+        lower, upper = status.available_remaining
+        return f'可用剩余时间：{format_remaining(lower)} ～ {format_remaining(upper)}'
+
+    def open_dialog(self) -> None:
+        if self.playback is None:
+            return
+        status = self.playback.status()
+        if status.available_remaining is None:
+            return
+        if self.dialog is not None:
+            self.dialog.lift()
+            self.entry.focus_set()
+            return
+        self.dialog = dialog = tk.Toplevel(self.row)
+        dialog.title('跳转时间')
+        dialog.configure(bg=BG)
+        dialog.transient(self.row.winfo_toplevel())
+        dialog.resizable(False, False)
+        tk.Label(dialog, text='比赛剩余时间', bg=BG, fg=TEXT,
+                 font=('Arial', 12, 'bold')).pack(padx=24, pady=(18, 8))
+        current = status.remaining_seconds
+        self.input_var = tk.StringVar(value=format_remaining(current) if current is not None else '')
+        self.entry = tk.Entry(dialog, textvariable=self.input_var, width=12,
+                              justify=tk.CENTER, font=('Arial', 18, 'bold'), bg=PANEL,
+                              fg='#ffdd00', insertbackground=TEXT, relief=tk.FLAT,
+                              highlightthickness=1, highlightbackground='#3a3b5c', highlightcolor=ACCENT)
+        self.entry.pack(padx=24, ipady=5)
+        tk.Label(dialog, text='MM:SS，例如 12:30', bg=BG, fg=MUTED,
+                 font=('Arial', 10)).pack(pady=(6, 8))
+        self.range_label = tk.Label(dialog, text=self._range_text(status), bg=BG,
+                                    fg=TEXT, font=('Arial', 10))
+        self.range_label.pack(padx=24)
+        self.notice_label = tk.Label(dialog, text=status.notice, bg=BG, fg=MUTED,
+                                     wraplength=340, font=('Arial', 10))
+        self.notice_label.pack(padx=20, pady=(6, 0))
+        self.error_var = tk.StringVar(value='')
+        tk.Label(dialog, textvariable=self.error_var, bg=BG, fg='#ff7d9c',
+                 wraplength=340, font=('Arial', 10)).pack(padx=16, pady=8)
+        actions = tk.Frame(dialog, bg=BG)
+        actions.pack(pady=(0, 16))
+        DarkButton(actions, '取消', self.close_dialog).pack(side=tk.LEFT, padx=6)
+        self.btn_confirm = DarkButton(actions, '跳转', self.submit)
+        self.btn_confirm.pack(side=tk.LEFT, padx=6)
+        dialog.bind('<Return>', lambda _: self.submit())
+        dialog.bind('<Escape>', lambda _: self.close_dialog())
+        dialog.protocol('WM_DELETE_WINDOW', self.close_dialog)
+        dialog.update_idletasks()
+        root = self.row.winfo_toplevel()
+        x = root.winfo_rootx() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
+        y = root.winfo_rooty() + 100
+        dialog.geometry(f'+{max(0, x)}+{max(0, y)}')
+        self.entry.focus_set()
+        self.entry.selection_range(0, tk.END)
+
+    def submit(self) -> None:
+        if self.playback is None or self.input_var is None:
+            return
+        try:
+            seconds = parse_remaining(self.input_var.get())
+            self.playback.seek_remaining(seconds)
+        except ValueError as exc:
+            self.error_var.set(str(exc))
+            return
+        self.close_dialog()
+        self.refresh()
+
+    def return_live(self) -> None:
+        if self.playback is None:
+            return
+        self.playback.return_live()
+        self.close_dialog()
+        self.refresh()
+
+    def close_dialog(self) -> None:
+        if self.dialog is not None:
+            dialog, self.dialog = self.dialog, None
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass  # The root may already have destroyed its transient children.
+        self.input_var = self.error_var = None
+
+    def destroy(self) -> None:
+        self.close_dialog()

@@ -1,0 +1,10 @@
+include config.example.toml
+recursive-include src/lilyrex/data *.json *.png
+prune docs
+prune tests
+prune dev_tools
+prune recordings
+prune 资源
+prune .lilyrex
+exclude README.md AGENTS.md config.toml config.toml.* ws_output.txt PLAN.md
+global-exclude *.md *.pyc .DS_Store

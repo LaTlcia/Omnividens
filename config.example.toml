@@ -1,0 +1,107 @@
+# 复制为项目根目录 config.toml；lilyrex --config config.toml watch。
+# 回放无需连接配置；watch/record要求connection.room_id和identity.uuid。
+# 不要覆盖已有本机私有配置；迁移脚本保留原值。
+# 优先级：显式环境变量 > config.toml > 下列非敏感默认值。
+# 伤害主数据随包提供。代理认证只填本机config.toml，不分发。
+
+[connection]
+url = "https://reflector-allb.assaultlily-lb.jp/?EIO=3&transport=websocket"
+room_id = ""                     # watch/record必填，观战房间ID
+proxy_url = ""                   # 可选，含协议的代理URL；空值直连
+compression = true              # lily_deflate permessage-deflate
+connect_timeout = 30.0           # 建连超时秒数，必须大于0
+namespace = "/march"
+socketio_path = "socket.io"      # Engine.IO默认端点路径，与namespace不同
+
+[identity]
+uuid = ""                        # watch/record必填，观战身份
+user_id = 0
+user_name = ""
+user_agent = "UnityRequest"
+watcher_user_id = 0              # 从战场UI隐藏的观战玩家ID，0表示不隐藏
+
+[paths]
+data_dir = "dev_tools/data"       # 相对于配置文件；本机输出目录
+namebase_dir = ""                 # 空值使用更新缓存/内置Namebase；指定目录时固定本地模式
+catalog_dir = ""                  # 可选：配套本机计算目录；空值保留内置计算数据
+assets_dir = ""                   # 空值使用内置图片，或指定本机目录
+
+[masterdata_update]
+enabled = true                   # 每次打开观战/回放窗口检查；--offline可单次禁用
+cache_dir = ".lilyrex/masterdata"  # 相对于配置文件；完整版本缓存，不分发
+owner = "LaTlcia"                 # 公开GitHub主数据源的用户/组织
+repository = "A.RA.YA"            # 公开仓库名
+branch = "main"                  # 查询最新提交后，整套下载固定到同一SHA
+subdirectory = "MasterdataBase"   # 原始JSON所在目录
+check_timeout = 3.0               # 版本检查超时，秒，有限正数
+download_timeout = 15.0           # 单文件下载超时，秒，有限正数
+total_timeout = 60.0              # 本轮更新总时限，秒，有限正数
+
+[logging]
+level = "INFO"                    # DEBUG/INFO/WARNING/ERROR，UTC日志到stderr
+
+[ui]
+title = "GVG Battle Monitor"
+
+[replay]
+timing = "server"                 # recorded/server/burst
+speed = 1.0                       # 有限正数，CLI --speed可覆盖
+warmup = true                     # 跳转前预热记牌与被动池
+
+[passives]
+mode = "observed"                 # observed已见池/configured完整配置池/manual手动UP
+level_multiplier = 1.5            # 被动等级倍率，独立于主动技能倍率
+theme_attributes = []             # 独立的被动主题：1火/2水/3风/4光/5暗，各自加2个百分点
+# 火/风同时有被动主题增益时填[1,3]；不从damage_preview.theme倍率推导概率。
+legendary_level = 0               # 0未知不计；1..5为limitBreakCount 0..4
+cards = []                        # configured必填精确card_id+skill_id，不重复卡
+# deck_id = 123                   # 可选：完整配置池仅用于此卡组，切组后退回已见池
+# [passives.players."10001"]      # 合成玩家ID示例；未填字段继承passives
+# mode = "configured"
+# deck_id = 123
+# level_multiplier = 1.5
+# theme_attributes = [1, 3]
+# legendary_level = 1
+# cards = [{card_id = 10001, skill_id = 20001, passive_level_multiplier = 1.5, legendary_level = 1}]
+
+[damage_preview]
+enabled = true                   # 是否显示伤害牌悬停预估
+hover_delay_ms = 180              # 悬停延迟，整数毫秒，0..5000
+
+[damage_preview.defaults]
+skill_level = 1.5                 # 技能等级乘数，非技能等级编号
+benefit = 1.1                     # 恩惠乘数
+charm_bonus = { fire = 0.0, water = 0.0, wind = 0.0, light = 0.0, dark = 0.0 }
+# CHARM按当前牌属性取1+bonus；例如fire=0.1、wind=0.2，其余保持0.0。
+adx = 1.0                        # ADX直接乘数，如0.95/1/1.05/0.9975
+theme = { fire = 1.0, water = 1.0, wind = 1.0, light = 1.0, dark = 1.0 }
+# 主题按当前牌属性取直接倍率；例如fire=1.1、wind=1.2，其余保持1.0。
+up_bonus = 0.0                   # manual模式手工UP；observed/configured不叠加此值
+crit_rate = 0.05                 # 暴击概率，0..1；基础为5%
+# 蓄力按比赛经过时间每整分钟二次成长，600秒达到各技能主数据中的独立上限。
+costume_match_multiplier = 1.15  # 衣装主类型与牌型匹配时的乘数
+
+# 逐玩家覆盖示例，10001为合成ID；未填写字段继承defaults。
+# [damage_preview.players."10001"]
+# skill_level = 1.5
+# benefit = 1.1
+# charm_bonus = { fire = 0.2 }    # 仅覆盖火，其余属性继承defaults
+# adx = 1.0
+# theme = { fire = 1.1 }
+# up_bonus = 0.0
+# crit_rate = 0.05
+# costume_match_multiplier = 1.15
+
+# 可选环境覆盖（不要求配置）：
+# LILYREX_PREVIEW_ENABLED=true|false|1|0
+# LILYREX_PREVIEW_HOVER_DELAY_MS=180
+# LILYREX_DAMAGE_SKILL_LEVEL=1.5，其他defaults字段同样使用大写字段名。
+# LILYREX_DAMAGE_THEME='{fire=1.1,wind=1.2}'，CHARM_BONUS同样支持行内表或旧标量。
+# LILYREX_DAMAGE_THEME_FIRE=1.3：单属性环境变量优先于整项环境覆盖。
+# 旧theme/charm_bonus标量按五属性等值读取；旧charge_fraction仅兼容校验并提示弃用。
+# 其他分组：LILYREX_CONNECTION_ROOM_ID、LILYREX_CONNECTION_PROXY_URL、
+# LILYREX_IDENTITY_UUID、LILYREX_REPLAY_SPEED等，规则LILYREX_<分组>_<字段>。
+# 被动环境覆盖：LILYREX_PASSIVES_MODE/LEVEL_MULTIPLIER/LEGENDARY_LEVEL，
+# LILYREX_PASSIVES_THEME_ATTRIBUTES="1,3"，显式环境设置也覆盖逐玩家值。
+# 显式环境倍率覆盖所有玩家，包括已有逐玩家TOML值。
+# 这些加成是估计假设；广播基础四维和buff层数始终由实时快照提供。
