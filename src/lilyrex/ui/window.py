@@ -79,13 +79,17 @@ class GameStyleGUI(WindowLayout, BattleFooter):
             return
         self._hide_damage_preview()
         continues = getattr(session, 'continues', None)
-        if not callable(continues) or not continues(self.session):
+        forward = callable(continues) and continues(self.session)
+        if not forward:
             self.hp_log.clear()
         for column in self.cols:
             for panel in column['panels']:
                 if hasattr(panel, 'cancel_hp_animation'):
                     panel.cancel_hp_animation()
-                panel.hide()
+                if hasattr(panel, 'cancel_buff_animation'):
+                    panel.cancel_buff_animation(reset=not forward)
+                if not forward:
+                    panel.hide()
         self.session = self.presenter.session = session
         self.deck, self.damage_preview = session.deck, session.preview
         self._deck_ranker = (DeckDamageRankingService(session.preview)

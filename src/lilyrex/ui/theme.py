@@ -19,6 +19,10 @@ ICON_MIN, ICON_MAX = 14, 30   # buff/debuff block scales within this to fit the 
 ICON_GAP = 2
 DIM_ZERO = True               # level 0 → faded icon, so real buffs/debuffs stand out
 DIM_ALPHA = 0.3
+# Per-icon level changes: bright fill, outline, dim fill; milliseconds of UI time.
+BUFF_FLASH_UP = ("#ff7070", "#ff9b9b", "#873b49")
+BUFF_FLASH_DOWN = ("#69b9ff", "#9ed3ff", "#315980")
+BUFF_FLASH_DIM_MS, BUFF_FLASH_END_MS = 250, 800
 BASIC_EFFECT_FIELDS = ("physicalAttackEffectLevel", "physicalDefenseEffectLevel",
                        "magicalAttackEffectLevel", "magicalDefenseEffectLevel")
 CARD_TYPE_ID = {v: k for k, v in CARD_TYPE_MAP.items()}

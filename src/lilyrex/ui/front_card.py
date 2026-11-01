@@ -21,6 +21,7 @@ class PlayerCardPanel(CardBase):
 
         # icon slots (image, badge shadow, badge); positioned in _render from self.s
         self.slots = [self._icon_slot() for _ in self.SLOT_POS]
+        self._init_buff_highlights()
         self.stack_slots = [self._icon_slot() for _ in range(MAX_STACKS)]
         self.i_target = c.create_text(0, 0, anchor="w", font=F_SMALL)
         self.i_auto = self._pill("#1565c0")
@@ -69,6 +70,7 @@ class PlayerCardPanel(CardBase):
         for slot, (row, col), (image, lv) in zip(self.slots, self.SLOT_POS, specs):
             self._draw_icon(slot, 8 + col * step, self.ROW_ICON + row * step, image,
                             str(abs(lv)) if lv else "", "#ffcf5c" if lv > 0 else "#7cc4ff", badge_font)
+        self._render_buff_highlights(user['userId'], tuple(lv for _, lv in specs))
 
         # right of the block, one line per icon row: stacks / targets / AUTO CPU
         rx = 8 + 5 * step + 8
@@ -97,6 +99,81 @@ class PlayerCardPanel(CardBase):
                 self._set(val_item, state="hidden")
                 self._set(time_item, state="hidden")
 
+
+    def _init_buff_highlights(self) -> None:
+        self._buff_uid: int | None = None
+        self._buff_levels: tuple[int, ...] | None = None
+        self._buff_jobs: dict[int, list[str]] = {}
+        self._buff_tokens: dict[int, object] = {}
+        self._buff_rects: list[int] = []
+        for image, _, _ in self.slots:
+            item = self.card.create_rectangle(0, 0, 0, 0, width=1, stipple='gray50',
+                                              state='hidden')
+            self.card.tag_lower(item, image)
+            self._buff_rects.append(item)
+        self.card.bind('<Destroy>', self._on_buff_destroy, add='+')
+
+    def _render_buff_highlights(self, uid: int, levels: tuple[int, ...]) -> None:
+        if uid != self._buff_uid:
+            self.cancel_buff_animation()
+            self._buff_uid = uid
+        previous = self._buff_levels
+        self._buff_levels = tuple(levels)
+        step = self.s + ICON_GAP
+        for index, (item, (row, col), level) in enumerate(zip(self._buff_rects, self.SLOT_POS, levels)):
+            x, y = 8 + col * step, self.ROW_ICON + row * step
+            self._coords(item, x - 1, y - 1, x + self.s + 1, y + self.s + 1)
+            if previous is not None and level != previous[index]:
+                self._flash_buff(index, level > previous[index])
+
+    def _cancel_buff_job(self, index: int) -> None:
+        self._buff_tokens.pop(index, None)
+        for job in self._buff_jobs.pop(index, ()):
+            self.card.after_cancel(job)
+
+    def _flash_buff(self, index: int, increased: bool) -> None:
+        self._cancel_buff_job(index)
+        token = self._buff_tokens[index] = object()
+        item = self._buff_rects[index]
+        bright, outline, dim = BUFF_FLASH_UP if increased else BUFF_FLASH_DOWN
+        self.card.itemconfigure(item, fill=bright, outline=outline, state='normal')
+
+        def fade() -> None:
+            if self._buff_tokens.get(index) is token:
+                self.card.itemconfigure(item, fill=dim, outline=bright)
+
+        def clear() -> None:
+            if self._buff_tokens.get(index) is token:
+                self.card.itemconfigure(item, state='hidden')
+                self._buff_jobs.pop(index, None)
+                self._buff_tokens.pop(index, None)
+
+        self._buff_jobs[index] = [self.card.after(BUFF_FLASH_DIM_MS, fade),
+                                  self.card.after(BUFF_FLASH_END_MS, clear)]
+
+    def cancel_buff_animation(self, *, reset: bool = True) -> None:
+        """Stop obsolete effects; a forward continuation may retain the baseline."""
+        for index, item in enumerate(self._buff_rects):
+            self._cancel_buff_job(index)
+            self.card.itemconfigure(item, state='hidden')
+        if reset:
+            self._buff_uid = self._buff_levels = None
+
+    def hide(self) -> None:
+        self.cancel_buff_animation()
+        super().hide()
+
+    def update(self, user: dict, all_players: list, stack_data: dict, guild_info: dict) -> None:
+        if not self._shown:
+            # Hidden panels can be rendered by a resize before they are reused.
+            self.cancel_buff_animation()
+        super().update(user, all_players, stack_data, guild_info)
+
+    def _on_buff_destroy(self, event) -> None:
+        if event.widget is self.card:
+            for index in tuple(self._buff_jobs):
+                self._cancel_buff_job(index)
+            self._buff_uid = self._buff_levels = None
 
     def _log_row_y(self, n):
         line_h = 3 * (self.s + ICON_GAP) / HP_LOG_LEN
