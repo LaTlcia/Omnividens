@@ -12,10 +12,13 @@ class WindowLayout:
         side = tk.Frame(self.root, bg="#16213e", width=CONSOLE_COL_W, relief=tk.RIDGE, bd=1)
         side.pack(side=tk.RIGHT, fill=tk.Y)
         side.pack_propagate(False)
-        tk.Label(side, text="控制台", fg="white", bg="#16213e", font=("Arial", 11, "bold")).pack(fill=tk.X, pady=(6, 2))
+        console_header = tk.Frame(side, bg="#16213e")
+        console_header.pack(fill=tk.X, pady=(6, 2))
+        tk.Label(console_header, text="控制台", fg="white", bg="#16213e",
+                 font=("Arial", 11, "bold")).pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.console = tk.Frame(side, bg="#16213e")
         self.console.pack(fill=tk.BOTH, expand=True)
-        self.deck_console = DeckConsole(self.console, self.icons)
+        self.deck_console = DeckConsole(self.console, self.icons, sort_parent=console_header)
         # everything else (top bar, battlefield, bottom bar) lives left of it
         self.main = tk.Frame(self.root, bg="#1a1a2e")
         self.main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)

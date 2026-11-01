@@ -38,7 +38,8 @@ class DamagePreviewService:
     def update(self, snapshot: BattleSnapshot) -> None:
         self.snapshot = snapshot
 
-    def preview(self, user_id: int, card_id: int, skill_id: int) -> PreviewResult:
+    def preview(self, user_id: int, card_id: int, skill_id: int,
+                *, include_calculation: bool = True) -> PreviewResult:
         skill = self.catalog.skill(card_id, skill_id)
         if skill is None:
             reason = "尚未观察到该牌的攻击技能" if not skill_id else "该牌/技能没有可用的伤害参数"
@@ -107,7 +108,7 @@ class DamagePreviewService:
         calculation: list[str] = [
             '当前状态下次使用的预估；不是刚才该次攻击的实伤复算。',
             *condition.notes,
-        ]
+        ] if include_calculation else []
         for target in live:
             if target.stats is None:
                 notes.append(f"#{target.rank}缺少防御面板，未估计")
@@ -133,7 +134,8 @@ class DamagePreviewService:
             notes.extend(factors.notes)
             estimates.append(DamageEstimate(target.user_id, target.rank, target.name, damage.expected,
                                              damage.minimum, damage.maximum, attack, defense, target is locked))
-            calculation.extend(damage_trace(skill, actor, target, attack, defense, factors, damage))
+            if include_calculation:
+                calculation.extend(damage_trace(skill, actor, target, attack, defense, factors, damage))
         def priority(note: str) -> int:
             # The compact tooltip truncates its notes: keep the current card's
             # attribute and time-dependent growth visible before longer details.
@@ -155,12 +157,14 @@ class DamagePreviewService:
                 return 4
             return 5
         ordered_notes = tuple(sorted(dict.fromkeys(notes), key=priority))
-        calculation.extend((
-            'A/D含层数估计；各系数为实际代入值。显示至6位小数，内部使用binary64。',
-            '0.95 = 伤害随机系数期望；100.5 = RandInt(1,200)期望。'
-            'E忽略最后一次向下取整，单此项误差小于1点。',
-            '随机上下界固定UP期望，未覆盖所有被动发动组合。',
-        ))
+        if include_calculation:
+            calculation.extend((
+                'A/D含层数估计；各系数为实际代入值。显示至6位小数，内部使用binary64。',
+                '0.95 = 伤害随机系数期望；100.5 = RandInt(1,200)期望。'
+                'E忽略最后一次向下取整，单此项误差小于1点。',
+                '随机上下界固定UP期望，未覆盖所有被动发动组合。',
+                '计算依据与未计入项', *ordered_notes,
+            ))
         return PreviewResult(**base, estimates=tuple(estimates), assumptions=ordered_notes,
                              error=None if estimates else "敌前排缺少可用防御面板",
-                             calculation=tuple(calculation) + ('计算依据与未计入项',) + ordered_notes)
+                             calculation=tuple(calculation))

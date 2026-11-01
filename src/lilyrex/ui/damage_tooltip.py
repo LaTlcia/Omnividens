@@ -26,7 +26,7 @@ class DamageTooltip:
 
     WIDTH = 340
     FORMULA_WIDTH = 480
-    LEAVE_DELAY_MS = 240
+    LEAVE_DELAY_MS = 800
     MAX_TARGETS = 5
     ATTRIBUTES = {1: "火", 2: "水", 3: "風", 4: "光", 5: "闇"}
 
@@ -91,13 +91,13 @@ class DamageTooltip:
         if self._destroyed:
             return
         self._cancel_leave()
-        self._position = (int(x_root), int(y_root))
         if key == self._key:
             self._provider = provider
-            if self.visible:
-                self._place()
+            if not self.visible:
+                self._position = (int(x_root), int(y_root))
             return
         self.hide()
+        self._position = (int(x_root), int(y_root))
         self._key, self._provider = key, provider
         self._after_id = self.root.after(self.delay_ms, self._show)
 
@@ -130,11 +130,11 @@ class DamageTooltip:
 
     def leave(self) -> None:
         """Allow crossing the gap from a card to this popup before dismissing."""
-        self._cancel_leave()
         if not self.visible:
             self.hide()
             return
-        self._leave_id = self.root.after(self.LEAVE_DELAY_MS, self._dismiss_if_outside)
+        if self._leave_id is None:
+            self._leave_id = self.root.after(self.LEAVE_DELAY_MS, self._dismiss_if_outside)
 
     def _cancel_leave(self) -> None:
         if self._leave_id is not None:
@@ -337,7 +337,9 @@ class DamageTooltip:
         self.window.update_idletasks()
         width, height = self.window.winfo_width(), self.window.winfo_height()
         screen_w, screen_h = self.window.winfo_screenwidth(), self.window.winfo_screenheight()
-        if self._pointer_inside():
+        if self.visible:
+            # Keep the popup reachable while the pointer crosses from its card.
+            # Refresh may resize content, but only screen bounds can move it.
             x, y = self.window.winfo_x(), self.window.winfo_y()
         else:
             pointer_x, pointer_y = self._position

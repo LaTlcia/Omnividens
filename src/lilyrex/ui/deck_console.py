@@ -1,8 +1,12 @@
 """Migrated Tk rendering; no networking or file configuration."""
 from __future__ import annotations
+from collections.abc import Mapping
+from types import MappingProxyType
 import tkinter as tk
 from .theme import *
 from .card_base import CardBase
+from .playback_controls import DarkButton
+from lilyrex.domain.card_ranking import CardDamageRank, order_ranked_cards
 from lilyrex.domain.deck_tracker import DECK_MAX
 
 class DeckConsole:
@@ -13,17 +17,33 @@ class DeckConsole:
     F_CARD = ("Arial", 9, "bold")
     F_SKILL = ("Arial", 8)
     F_HEAD = ("Arial", 11, "bold")
+    F_RANK = ("Arial", 7, "bold")
+    RANK_WIDTH = 44
+    AVG_COLOR, MAX_COLOR = "#55c9ff", "#ff707d"
+    AVG_DIM, MAX_DIM = "#3e6983", "#805060"
 
-    def __init__(self, parent, icons):
+    def __init__(self, parent, icons, *, sort_parent=None):
         self.icons = icons
         self.uid = self.user = self.tracker = None
-        self._head_key = None
+        self._head_key = object()
         self.on_hover = None
         self.on_hover_end = None
         self.on_hover_leave = None
         self._hit_rows = []
         self._hit_row_height = self.ROW_MIN
         self._hover_y = None
+        self.rankings: Mapping[int, CardDamageRank] = MappingProxyType({})
+        self.sort_mode: str | None = None
+        self.sort_controls = tk.Frame(sort_parent or parent, bg=self.BG)
+        self.sort_controls.pack(side=tk.RIGHT if sort_parent is not None else tk.TOP,
+                                anchor="e", padx=(2, 6))
+        self.btn_sort_avg = DarkButton(self.sort_controls, "A↓", lambda: self.toggle_sort("avg"))
+        self.btn_sort_max = DarkButton(self.sort_controls, "M↓", lambda: self.toggle_sort("max"))
+        for button, color in ((self.btn_sort_avg, self.AVG_COLOR), (self.btn_sort_max, self.MAX_COLOR)):
+            button.config(fg=color, font=("Arial", 9, "bold"), padx=4, pady=1,
+                          highlightcolor=color)
+            button.pack(side=tk.LEFT, padx=(2, 0))
+            button.set_enabled(False)
         self.head = tk.Canvas(parent, height=46, bg=self.BG, highlightthickness=0)
         self.head.pack(fill=tk.X, padx=6)
         self.body = tk.Canvas(parent, bg=self.BG, highlightthickness=0)
@@ -44,7 +64,7 @@ class DeckConsole:
         index = int(self.body.canvasy(event.y)) // row
         if (self.uid is None or not 0 <= index < len(self._hit_rows)
                 or event.y % row >= row - 2 or self._hit_rows[index] is None):
-            self._end_hover()
+            self._end_hover(leaving=True)
             return
         if self.on_hover:
             card, skill = self._hit_rows[index]
@@ -53,8 +73,50 @@ class DeckConsole:
     def show(self, uid, user, tracker):
         self._end_hover()
         self.uid, self.user, self.tracker = uid, user, tracker
-        self._head_key = None
+        self._head_key = object()
+        self.rankings = MappingProxyType({})
         self.redraw()
+
+    def set_rankings(self, rankings: Mapping[int, CardDamageRank]) -> None:
+        """Render a complete result batch without retaining a mutable caller mapping."""
+        self.rankings = MappingProxyType(dict(rankings))
+        self.redraw()
+
+    def toggle_sort(self, metric: str) -> None:
+        """Descending AVG/MAX, or original tracker order when clicked again."""
+        if metric not in ("avg", "max"):
+            raise ValueError("排序指标必须为avg或max")
+        if not self._has_ranked_cards():
+            return
+        self._end_hover()
+        self.sort_mode = None if self.sort_mode == metric else metric
+        self.redraw()
+
+    def _has_ranked_cards(self) -> bool:
+        if self.uid is None or self.tracker is None:
+            return False
+        cards = self.tracker.view(self.uid)[0]
+        return any(entry.card_id == card and entry.skill_id == skill and entry.reason is None
+                   and entry.avg_rank is not None and entry.max_rank is not None
+                   for card, skill in cards.items()
+                   if (entry := self.rankings.get(card)) is not None)
+
+    def _update_sort_buttons(self) -> None:
+        enabled = self._has_ranked_cards()
+        for metric, button, color in (("avg", self.btn_sort_avg, self.AVG_COLOR),
+                                      ("max", self.btn_sort_max, self.MAX_COLOR)):
+            button.set_enabled(enabled)
+            selected = self.sort_mode == metric
+            button.config(relief=tk.SUNKEN if selected else tk.FLAT,
+                          highlightbackground=color if selected else "#3a3b5c")
+
+    def _rank_for(self, card: int, skill: int, card_type: int) -> CardDamageRank | None:
+        entry = self.rankings.get(card)
+        if entry is None or (entry.card_id, entry.skill_id) != (card, skill):
+            return None
+        if card_type not in (1, 2, 3, 4) and entry.avg_rank is None and entry.max_rank is None:
+            return None
+        return entry
 
     def set_user(self, user):
         """Latest frame's data for the shown player (name/rank/job may change)."""
@@ -62,6 +124,7 @@ class DeckConsole:
         self._draw_head()
 
     def redraw(self):
+        self._update_sort_buttons()
         self._draw_head()
         self._draw_body()
 
@@ -109,7 +172,8 @@ class DeckConsole:
         cards, used, size, _, last, _ = self.tracker.view(self.uid)
         slots = max(size or DECK_MAX, len(cards))
         row = max(self.ROW_MIN, min(self.ROW_MAX, H // slots))
-        rows = list(cards.items()) + [None] * (slots - len(cards))
+        rows = list(order_ranked_cards(tuple(cards.items()), self.rankings, self.sort_mode))
+        rows += [None] * (slots - len(cards))
         if self._hover_y is not None:
             old_index, new_index = int(self._hover_y) // previous_height, int(self._hover_y) // row
             old_entry = previous_rows[old_index] if 0 <= old_index < len(previous_rows) else None
@@ -135,14 +199,23 @@ class DeckConsole:
             if attr in ATTRIBUTE_MAP:
                 b.create_image(x, (y0 + y1) // 2, anchor="w", image=self.icons.attribute(attr, 14, dim=done))
                 x += 17
+            ranking = self._rank_for(card, skill, ctype)
+            text_width = W - x - 6 - (self.RANK_WIDTH if ranking is not None else 0)
             two_lines = row >= 28
             name_y = y0 + row // 4 + 1 if two_lines else (y0 + y1) // 2
             b.create_text(x, name_y, anchor="w", font=self.F_CARD, fill="#5d607e" if done else "#ffffff",
-                          text=CardBase._fit(name, self.F_CARD, W - x - 6))
+                          text=CardBase._fit(name, self.F_CARD, text_width), tags=f"card_name_{card}")
             if two_lines:
                 sk = self.icons.resources.skill_names.get(skill) if skill else "（NeunWelt 充能）"
                 b.create_text(x, y1 - row // 4 + 1, anchor="w", font=self.F_SKILL,
                               fill="#4a4c66" if done else "#aab0dc",
-                              text=CardBase._fit(sk or f"Skill {skill}", self.F_SKILL, W - x - 6))
+                              text=CardBase._fit(sk or f"Skill {skill}", self.F_SKILL, text_width))
+            if ranking is not None:
+                for metric, rank, offset, color in (
+                        ("avg", ranking.avg_rank, row // 4, self.AVG_DIM if done else self.AVG_COLOR),
+                        ("max", ranking.max_rank, 3 * row // 4, self.MAX_DIM if done else self.MAX_COLOR)):
+                    b.create_text(W - 6, y0 + offset, anchor="e", font=self.F_RANK,
+                                  text=f"#{rank}" if rank is not None else "—", fill=color,
+                                  tags=f"rank_{metric}_{card}")
 
 

@@ -7,6 +7,7 @@ from lilyrex.domain.ports import ControlPort
 from lilyrex.domain.playback import PlaybackPort
 from lilyrex.domain.battle_time import format_remaining
 from lilyrex.domain.core_winrate import calculate_core_winrate
+from lilyrex.services.deck_damage_ranking import DeckDamageRankingService
 from .battle_footer import BattleFooter
 from .damage_tooltip import DamageTooltip, TooltipTheme
 from .front_card import PlayerCardPanel
@@ -41,6 +42,9 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         self.selected_uid = None
         self._users_by_uid, self._panel_by_uid = {}, {}
         self.damage_preview = session.preview
+        self._rankings_enabled = preview_enabled
+        self._deck_ranker = (DeckDamageRankingService(session.preview)
+                             if preview_enabled and session.preview is not None else None)
         self.damage_tooltip = None
         self._damage_hover = None
         self._last_revision = -1
@@ -84,6 +88,8 @@ class GameStyleGUI(WindowLayout, BattleFooter):
                 panel.hide()
         self.session = self.presenter.session = session
         self.deck, self.damage_preview = session.deck, session.preview
+        self._deck_ranker = (DeckDamageRankingService(session.preview)
+                             if self._rankings_enabled and session.preview is not None else None)
         self._last_revision = -1
         self.last_points = (-1, -1)
         self._clock = None
@@ -161,7 +167,7 @@ class GameStyleGUI(WindowLayout, BattleFooter):
                     self.deck_console.show(self.selected_uid, self._users_by_uid[self.selected_uid], self.deck)
                 else:
                     self.deck_console.set_user(self._users_by_uid[self.selected_uid])
-                    self.deck_console.redraw()
+                self._refresh_deck_rankings()
         self.update_bottom_info(view.orders, view.pending_orders, view.ball, view.server_time)
         self._refresh_damage_preview()
 
@@ -170,6 +176,15 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         for player_id, panel in self._panel_by_uid.items():
             panel.set_selected(player_id == self.selected_uid)
         self.deck_console.show(self.selected_uid, self._users_by_uid.get(self.selected_uid), self.deck)
+        self._refresh_deck_rankings()
+
+    def _refresh_deck_rankings(self) -> None:
+        if self.selected_uid is None or self._deck_ranker is None:
+            self.deck_console.set_rankings({})
+            return
+        cards = dict(self.deck.view(self.selected_uid)[0])
+        rankings = self._deck_ranker.rank(self.selected_uid, cards, revision=self.session.revision)
+        self.deck_console.set_rankings(rankings)
 
     def swap_view(self):
         self.view_swapped = not self.view_swapped
