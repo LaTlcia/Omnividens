@@ -43,4 +43,5 @@ class BattlePresenter:
                      "cardTypeList": [_pick(x, ("cardType",)) for x in ball.get("cardTypeList", ())]}
         return BattleView(guilds, tuple(players), stacks, orders, pending, ball_view,
                           self.session.snapshot.elapsed_seconds, self.session.snapshot.timestamp,
-                          self.session.revision)
+                          self.session.revision,
+                          getattr(self.session, "display_elapsed_seconds", None))

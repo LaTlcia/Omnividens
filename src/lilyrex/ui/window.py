@@ -5,7 +5,7 @@ import time
 
 from lilyrex.domain.ports import ControlPort
 from lilyrex.domain.playback import PlaybackPort
-from lilyrex.domain.battle_time import format_remaining
+from lilyrex.domain.battle_time import format_remaining, format_remaining_microseconds
 from lilyrex.domain.core_winrate import calculate_core_winrate
 from lilyrex.services.deck_damage_ranking import DeckDamageRankingService
 from .battle_footer import BattleFooter
@@ -124,8 +124,10 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         self.lbl_score_left.config(text=f"{a:,}")
         self.lbl_score_right.config(text=f"{b:,}")
         self._clock = (view.elapsed_seconds, time.monotonic())
-        remaining = max(0, BATTLE_SECONDS - view.elapsed_seconds)
-        self.lbl_countdown.config(text=format_remaining(remaining))
+        display_elapsed = getattr(view, "display_elapsed_seconds", None)
+        remaining = max(0, BATTLE_SECONDS - (view.elapsed_seconds if display_elapsed is None else display_elapsed))
+        if getattr(self, 'playback', None) is None:
+            self.lbl_countdown.config(text=format_remaining_microseconds(remaining))
         if (a, b) != self.last_points:
             self.lbl_wr_a.config(text=f"WR A: {self.calc_wr(a, b, 'A')}")
             self.lbl_wr_ba.config(text=f"WR BA: {self.calc_wr(a, b, 'BA')}")

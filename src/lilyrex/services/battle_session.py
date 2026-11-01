@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping
 from lilyrex.domain.deck_tracker import DeckTracker
 from lilyrex.domain.events import BattleEvent
+from lilyrex.domain.display_clock import DisplayClock
 from lilyrex.domain.hp_effects import hp_changes, project_hp
 from lilyrex.domain.action_state import project_action_state
 from lilyrex.domain.stack_state import project_stack_state
@@ -24,12 +25,21 @@ class BattleSession:
         self.deck = DeckTracker()
         self.latest_history: Mapping[str, Any] = {}
         self.snapshot = BattleSnapshot()
+        self._display_clock = DisplayClock()
         self.revision = 0
         self.event_count = 0
         self._last_key: tuple[int, int] | None = None
         self._hp_events: deque[tuple[int, int, int]] = deque()
         self._view_token = object()
         self._continued_from: object | None = None
+
+    @property
+    def display_elapsed_seconds(self) -> float | None:
+        return self._display_clock.elapsed
+
+    @property
+    def display_clock_stopped(self) -> bool:
+        return self._display_clock.stopped
 
     def continues(self, previous: BattleSession) -> bool:
         """Whether this view is a staged forward continuation of that exact view."""
@@ -50,6 +60,7 @@ class BattleSession:
         result.latest_history, result.snapshot = self.latest_history, self.snapshot
         result.revision, result.event_count = self.revision, self.event_count
         result._last_key = self._last_key
+        result._display_clock = self._display_clock
         result._continued_from = self._view_token
         return result
 
@@ -63,6 +74,7 @@ class BattleSession:
         key = (event.connection_generation, event.sequence)
         if self._last_key is not None and key <= self._last_key:
             raise ValueError("事件接收顺序回退或重复")
+        display_clock = self._display_clock.project(event)
         self._last_key = key
         self.event_count += 1
         payload = event.payload
@@ -119,6 +131,7 @@ class BattleSession:
             self.snapshot = replace(self.snapshot, timestamp=event.server_time,
                                     elapsed_seconds=self.snapshot.elapsed_seconds + delta)
             self.preview.update(self.snapshot)
+        self._display_clock = display_clock
         self.revision += 1
 
     def drain_hp_events(self) -> list[tuple[int, int, int]]:

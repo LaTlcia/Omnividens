@@ -1,8 +1,10 @@
 """Dark themed time navigation controls; only the viewing port is exposed."""
 from __future__ import annotations
+from dataclasses import replace
+import math
 import tkinter as tk
 
-from lilyrex.domain.battle_time import format_remaining, parse_remaining
+from lilyrex.domain.battle_time import format_remaining, format_remaining_microseconds, parse_remaining
 from lilyrex.domain.playback import PlaybackPort, PlaybackStatus
 
 BG, PANEL, TEXT, MUTED, ACCENT = '#16213e', '#23243a', '#e0e0f0', '#8a8fb3', '#00d4ff'
@@ -39,8 +41,10 @@ class DarkButton(tk.Label):
 class PlaybackControls:
     def __init__(self, parent, playback: PlaybackPort | None):
         self.playback = playback
-        self.dialog = None
+        self.dialog = self.speed_dialog = None
         self.input_var = self.error_var = None
+        self.speed_input_var = self.speed_error_var = None
+        self.speed_entry = None
         self._last_status: PlaybackStatus | None = None
         self.row = tk.Frame(parent, bg=BG)
         self.row.pack()
@@ -57,6 +61,8 @@ class PlaybackControls:
         self.countdown.bind('<Return>', self._pause_click)
         self.btn_live = DarkButton(self.row, '回到直播', self.return_live)
         self.btn_live.pack(side=tk.LEFT, padx=(12, 0))
+        self.btn_speed = DarkButton(self.row, '1×', self.open_speed_dialog)
+        self.btn_speed.pack(side=tk.LEFT, padx=(6, 0))
         self.status_label = tk.Label(parent, text='', bg=BG, fg=MUTED,
                                      font=('Arial', 9), height=1)
         self.status_label.pack()
@@ -67,9 +73,19 @@ class PlaybackControls:
 
     def refresh(self) -> None:
         status = self.playback.status() if self.playback is not None else None
-        if status == self._last_status and status is not None:
+        if status is not None and status.display_remaining_seconds is not None:
+            text = format_remaining_microseconds(status.display_remaining_seconds)
+            if text != getattr(self, '_last_countdown', None):
+                self.countdown.config(text=text)
+                self._last_countdown = text
+        else:
+            self._last_countdown = None
+        # Clock-only ticks must not reconfigure buttons, dialogs or status text.
+        controls_status = (replace(status, display_remaining_seconds=
+            0.0 if status.display_remaining_seconds is not None else None) if status else None)
+        if controls_status == self._last_status and status is not None:
             return
-        self._last_status = status
+        self._last_status = controls_status
         self.btn_step_backward.set_enabled(status is not None and status.can_step_backward)
         self.btn_step_forward.set_enabled(status is not None and status.can_step_forward)
         can_pause = status is not None and status.can_pause
@@ -77,10 +93,19 @@ class PlaybackControls:
         self.btn_seek.set_enabled(status is not None and status.available_remaining is not None)
         self.btn_live.set_enabled(status is not None and status.mode != 'replay'
                                   and (status.mode == 'history' or status.seeking))
+        can_set_speed = status is not None and status.can_set_speed
+        self.btn_speed.set_enabled(can_set_speed)
+        self.btn_speed.config(text='不限速' if status is not None and status.unlimited
+                              else f'{status.speed:g}×' if status is not None else '1×')
+        if self.speed_dialog is not None and not can_set_speed:
+            self.close_speed_dialog()
         if status is None:
             self.status_label.config(text='')
             return
-        self.status_label.config(text=self._status_text(status),
+        text = self._status_text(status)
+        if status.display_remaining_seconds is not None:
+            text += ' · 接收时间推算'
+        self.status_label.config(text=text,
                                  fg=ACCENT if status.mode == 'live' else MUTED,
                                  cursor='hand2' if status.available_remaining is not None else '')
         if self.dialog is not None:
@@ -120,7 +145,8 @@ class PlaybackControls:
         return 'break'
 
     def _space_key(self, event) -> str | None:
-        if self.dialog is not None or event.widget.winfo_toplevel() is not self._root:
+        if (self.dialog is not None or self.speed_dialog is not None
+                or event.widget.winfo_toplevel() is not self._root):
             return None
         if isinstance(event.widget, DarkButton) or event.widget.winfo_class() in {
                 'Entry', 'TEntry', 'Text', 'Spinbox', 'TSpinbox', 'TCombobox',
@@ -158,6 +184,7 @@ class PlaybackControls:
         status = self.playback.status()
         if status.available_remaining is None:
             return
+        self.close_speed_dialog()
         if self.dialog is not None:
             self.dialog.lift()
             self.entry.focus_set()
@@ -203,6 +230,89 @@ class PlaybackControls:
         self.entry.focus_set()
         self.entry.selection_range(0, tk.END)
 
+    def open_speed_dialog(self) -> None:
+        if self.playback is None or not self.playback.status().can_set_speed:
+            return
+        if self.speed_dialog is not None:
+            self.speed_dialog.lift()
+            self.speed_entry.focus_set()
+            return
+        self.close_dialog()
+        status = self.playback.status()
+        self.speed_dialog = dialog = tk.Toplevel(self.row)
+        dialog.title('播放倍速')
+        dialog.configure(bg=BG)
+        dialog.transient(self.row.winfo_toplevel())
+        dialog.resizable(False, False)
+        tk.Label(dialog, text='播放倍速', bg=BG, fg=TEXT,
+                 font=('Arial', 12, 'bold')).pack(padx=24, pady=(18, 8))
+        presets = tk.Frame(dialog, bg=BG)
+        presets.pack(padx=18, pady=(0, 10))
+        for index, speed in enumerate((0.1, 0.25, 0.5, 1, 2, 4, 8, 16)):
+            button = DarkButton(presets, f'{speed:g}×',
+                                lambda value=speed: self._select_speed(value))
+            if speed == status.speed:
+                button.config(relief=tk.SUNKEN, highlightbackground=ACCENT)
+            button.grid(row=index // 4, column=index % 4, padx=3, pady=3, sticky='ew')
+        tk.Label(dialog, text='自定义倍率（正数，支持慢放）', bg=BG, fg=MUTED,
+                 font=('Arial', 10)).pack(padx=20)
+        self.speed_input_var = tk.StringVar(value=str(status.speed))
+        self.speed_entry = tk.Entry(dialog, textvariable=self.speed_input_var, width=12,
+                                   justify=tk.CENTER, font=('Arial', 18, 'bold'), bg=PANEL,
+                                   fg=ACCENT, insertbackground=TEXT, relief=tk.FLAT,
+                                   highlightthickness=1, highlightbackground='#3a3b5c',
+                                   highlightcolor=ACCENT)
+        self.speed_entry.pack(padx=24, pady=(6, 0), ipady=5)
+        self.speed_error_var = tk.StringVar(value='')
+        tk.Label(dialog, textvariable=self.speed_error_var, bg=BG, fg='#ff7d9c',
+                 wraplength=340, font=('Arial', 10)).pack(padx=16, pady=8)
+        actions = tk.Frame(dialog, bg=BG)
+        actions.pack(pady=(0, 16))
+        DarkButton(actions, '取消', self.close_speed_dialog).pack(side=tk.LEFT, padx=6)
+        DarkButton(actions, '应用', self.submit_speed).pack(side=tk.LEFT, padx=6)
+        dialog.bind('<Return>', lambda _: self.submit_speed())
+        dialog.bind('<Escape>', lambda _: self.close_speed_dialog())
+        dialog.protocol('WM_DELETE_WINDOW', self.close_speed_dialog)
+        dialog.update_idletasks()
+        root = self.row.winfo_toplevel()
+        x = root.winfo_rootx() + (root.winfo_width() - dialog.winfo_reqwidth()) // 2
+        dialog.geometry(f'+{max(0, x)}+{max(0, root.winfo_rooty() + 100)}')
+        self.speed_entry.focus_set()
+        self.speed_entry.selection_range(0, tk.END)
+
+    def _select_speed(self, speed: float) -> None:
+        if self.speed_input_var is not None:
+            self.speed_input_var.set(f'{speed:g}')
+            self.submit_speed()
+
+    def submit_speed(self) -> None:
+        if self.playback is None or self.speed_input_var is None:
+            return
+        try:
+            if not self.playback.status().can_set_speed:
+                raise ValueError('当前状态不能调节倍速')
+            try:
+                speed = float(self.speed_input_var.get().strip())
+            except ValueError:
+                raise ValueError('倍速必须是有限正数，例如0.25、1或2') from None
+            if not math.isfinite(speed) or speed <= 0:
+                raise ValueError('倍速必须是有限正数，例如0.25、1或2')
+            self.playback.set_speed(speed)
+        except ValueError as exc:
+            self.speed_error_var.set(str(exc))
+            return
+        self.close_speed_dialog()
+        self.refresh()
+
+    def close_speed_dialog(self) -> None:
+        if self.speed_dialog is not None:
+            dialog, self.speed_dialog = self.speed_dialog, None
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+        self.speed_input_var = self.speed_error_var = self.speed_entry = None
+
     def submit(self) -> None:
         if self.playback is None or self.input_var is None:
             return
@@ -220,6 +330,7 @@ class PlaybackControls:
             return
         self.playback.return_live()
         self.close_dialog()
+        self.close_speed_dialog()
         self.refresh()
 
     def close_dialog(self) -> None:
@@ -233,6 +344,7 @@ class PlaybackControls:
 
     def destroy(self) -> None:
         self.close_dialog()
+        self.close_speed_dialog()
         if self._space_binding is not None:
             binding, self._space_binding = self._space_binding, None
             try:

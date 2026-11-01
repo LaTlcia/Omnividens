@@ -50,3 +50,4 @@ class BattleView:
     elapsed_seconds: float
     server_time: float
     revision: int
+    display_elapsed_seconds: float | None = None

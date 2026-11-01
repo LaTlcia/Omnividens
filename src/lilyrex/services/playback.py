@@ -2,9 +2,11 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import logging
+import math
 from typing import Callable, Literal, Mapping
 from lilyrex.domain.battle_time import BATTLE_SECONDS
 from lilyrex.domain.events import ReplayOptions
+from lilyrex.domain.display_clock import RunningDisplayClock
 from lilyrex.domain.playback import PlaybackStatus
 from lilyrex.domain.replay_timeline import validate_options
 from lilyrex.services.battle_session import BattleSession
@@ -33,6 +35,7 @@ class PlaybackController:
             validate_options(options)
         self.timeline, self.new_session = timeline, new_session
         self.options, self.clock = options, clock
+        self._speed = float(options.speed) if options is not None else 1.0
         self.live_session = new_session()
         self.view_session = self.live_session
         self.mode = 'live' if options is None else 'replay'
@@ -48,6 +51,9 @@ class PlaybackController:
         self._action_label = ''
         self._incomplete = bool(options and not options.warmup)
         self.consumed_events = self.warmup_events = 0
+        self._live_display = RunningDisplayClock()
+        self._view_display = RunningDisplayClock()
+        self._held_display: float | None = None
 
     @property
     def controls_enabled(self) -> bool:
@@ -57,6 +63,10 @@ class PlaybackController:
         session = self.view_session
         remaining = (max(0.0, BATTLE_SECONDS - session.snapshot.elapsed_seconds)
                      if session.latest_history else None)
+        display_elapsed = self._display_elapsed()
+        display_remaining = (max(0.0, BATTLE_SECONDS - display_elapsed)
+                             if display_elapsed is not None else remaining)
+        unlimited = bool(self.options and self.options.timing == 'burst')
         segment = self._segment if self.options and self._segment >= 0 else None
         available = self.timeline.bounds(segment) if self._ready else None
         end = (self.options is not None and self._ready and self._rebuild is None
@@ -81,7 +91,53 @@ class PlaybackController:
                               can_pause=navigable and not end,
                               can_step_backward=previous is not None,
                               can_step_forward=following is not None,
-                              action_label=self._action_label)
+                              action_label=self._action_label,
+                              speed=self._speed if self.mode != 'live' else 1.0,
+                              can_set_speed=navigable and not unlimited,
+                              unlimited=unlimited,
+                              display_remaining_seconds=display_remaining)
+
+    def _view_position(self) -> float:
+        now = self._paused_at if self._paused else self.clock.monotonic()
+        return self._anchor_timeline + max(0.0, now - self._anchor_clock) * self._speed
+
+    def _display_elapsed(self) -> float | None:
+        if self._rebuild is not None:
+            return self._held_display
+        if self.mode == 'live':
+            return self._live_display.at(self.clock.monotonic())
+        if self.options and self.options.timing == 'burst':
+            return self.view_session.display_elapsed_seconds
+        # Do not extrapolate past an unconsumed event if a UI slice is late.
+        position = self._view_display.position
+        if self._ready and self._cursor < self.timeline.latest:
+            position = min(self._view_position(), self.timeline.point(self._cursor + 1).timeline_seconds)
+        return self._view_display.at(position)
+
+    def set_speed(self, speed: float) -> None:
+        """Change only pacing, retaining the continuous position between events."""
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+            raise ValueError('播放倍速必须是有限正数')
+        try:
+            new_speed = float(speed)
+        except (OverflowError, ValueError):
+            raise ValueError('播放倍速必须是有限正数') from None
+        if not math.isfinite(new_speed) or new_speed <= 0:
+            raise ValueError('播放倍速必须是有限正数')
+        if not self.status().can_set_speed:
+            raise ValueError('当前状态不能调节倍速，请等待加载完成或先进入回看；不限速模式不可调节')
+        if new_speed == self._speed:
+            return
+        effective_now = self._paused_at if self._paused else self.clock.monotonic()
+        assert effective_now is not None
+        position = self._anchor_timeline + max(0.0, effective_now - self._anchor_clock) * self._speed
+        if not math.isfinite(position):
+            raise ValueError('播放位置超出有限数值范围，请先跳转时间')
+        old_speed = self._speed
+        self._anchor_timeline, self._anchor_clock = position, effective_now
+        self._speed = new_speed
+        logging.getLogger('lilyrex.playback').info('speed mode=%s old=%s new=%s',
+                                                  self.mode, old_speed, new_speed)
 
     def toggle_pause(self) -> None:
         if not self.status().can_pause:
@@ -103,6 +159,7 @@ class PlaybackController:
         target = self.timeline.resolve_step(self._cursor, direction, self._segment)
         if target is None:
             raise ValueError('没有上一个动作' if direction < 0 else '没有下一个动作')
+        self._held_display = self._display_elapsed()
         if direction > 0:
             # All mutable state is private until the entire suffix succeeds.
             session = self.view_session.fork_for_view()
@@ -130,6 +187,7 @@ class PlaybackController:
         return self._generation
 
     def _begin(self, through: int, segment: int, anchor: float) -> None:
+        self._held_display = self._display_elapsed()
         self._generation += 1
         self._rebuild = _Rebuild(self.new_session(), self.timeline.segment_start(segment) - 1,
                                  through, segment, anchor)
@@ -142,10 +200,10 @@ class PlaybackController:
         point, notice = self.timeline.resolve_remaining(seconds, segment)
         self._notice = notice
         self._action_label = ''
+        self._begin(point.ordinal, point.segment_id, point.timeline_seconds)
         if self.options is None:
             self.mode = 'history'
             self.live_session.drain_hp_events()
-        self._begin(point.ordinal, point.segment_id, point.timeline_seconds)
         logging.getLogger('lilyrex.playback').info('seek request=%s remaining=%s', self._generation, seconds)
         return self._generation
 
@@ -160,6 +218,7 @@ class PlaybackController:
         self.view_session = self.live_session
         self._cursor, self._segment = self._live_cursor, self._live_segment
         self.mode, self._notice = 'live', ''
+        self._speed = 1.0
         self._incomplete = False
 
     def _consume(self, session: BattleSession, entry, warmup: bool) -> None:
@@ -179,8 +238,12 @@ class PlaybackController:
                     if self._live_segment >= 0:
                         self.live_session = self.new_session()
                     self._live_segment = entry.segment_id
+                    self._live_display = RunningDisplayClock()
                 showing_live = self.mode == 'live'
                 self._consume(self.live_session, entry, not showing_live)
+                self._live_display = self._live_display.observe(
+                    self.live_session.display_elapsed_seconds, self.clock.monotonic(),
+                    self.live_session.display_clock_stopped)
                 self._live_cursor = entry.ordinal
                 if showing_live:
                     self.view_session = self.live_session
@@ -188,6 +251,9 @@ class PlaybackController:
                 handled += 1
                 if self.clock.monotonic() >= deadline:
                     return
+
+        if self.timeline.complete and self._live_cursor >= self.timeline.latest:
+            self._live_display = self._live_display.freeze(self.clock.monotonic())
 
     def _start_replay(self) -> None:
         self._ready = True
@@ -223,11 +289,17 @@ class PlaybackController:
             self._anchor_timeline = job.anchor
             self._anchor_clock = self.clock.monotonic()
             self._paused_at = self._anchor_clock if self._paused else None
+            # --start may lie between events; keep the observation at its own
+            # timeline position so the initial partial interval is displayed.
+            observed_at = (self.timeline.point(job.cursor).timeline_seconds
+                           if job.cursor >= self.timeline.segment_start(job.segment) else job.anchor)
+            self._view_display = RunningDisplayClock(job.session.display_elapsed_seconds,
+                                                     observed_at, job.session.display_clock_stopped)
             self._rebuild = None
 
     def _advance_view(self, deadline: float) -> None:
         head, handled = self.timeline.latest, 0
-        speed = self.options.speed if self.options else 1.0
+        speed = self._speed
         burst = bool(self.options and self.options.timing == 'burst')
         while self._cursor < head and handled < 256:
             entries = self.timeline.read(self._cursor, head, 16)
@@ -240,7 +312,11 @@ class PlaybackController:
                 if entry.segment_id != self._segment:
                     self.view_session = self.new_session()
                     self._segment = entry.segment_id
+                    self._view_display = RunningDisplayClock()
                 self._consume(self.view_session, entry, False)
+                self._view_display = self._view_display.observe(
+                    self.view_session.display_elapsed_seconds, entry.timeline_seconds,
+                    self.view_session.display_clock_stopped)
                 self._cursor = entry.ordinal
                 self._action_label = ''
                 handled += 1

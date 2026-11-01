@@ -46,6 +46,10 @@ class PlaybackStatus:
     can_step_backward: bool = False
     can_step_forward: bool = False
     action_label: str = ''
+    speed: float = 1.0
+    can_set_speed: bool = False
+    unlimited: bool = False
+    display_remaining_seconds: float | None = None
 
 
 class TimelineStore(Protocol):
@@ -60,4 +64,5 @@ class PlaybackPort(Protocol):
     def seek_remaining(self, seconds: int) -> int: ...
     def return_live(self) -> None: ...
     def toggle_pause(self) -> None: ...
+    def set_speed(self, speed: float) -> None: ...
     def step(self, direction: Literal[-1, 1]) -> int: ...

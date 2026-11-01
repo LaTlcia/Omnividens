@@ -1,6 +1,7 @@
 """Battle time parsing and conservative mapping of received event prefixes."""
 from __future__ import annotations
 from dataclasses import dataclass, replace
+from decimal import Decimal, ROUND_HALF_UP
 import math
 import re
 from typing import Mapping
@@ -27,6 +28,19 @@ def format_remaining(seconds: float | None) -> str:
         raise ValueError("剩余时间必须是有限秒数")
     whole = int(max(0, seconds))
     return f"{whole // 60:02d}:{whole % 60:02d}"
+
+
+
+def format_remaining_microseconds(seconds: float | None) -> str:
+    """Round the displayed float to integer microseconds, with decimal half-up."""
+    if seconds is None:
+        return "--:--"
+    if isinstance(seconds, bool) or not math.isfinite(seconds):
+        raise ValueError("剩余时间必须是有限秒数")
+    micros = int((Decimal(str(max(0, seconds))) * 1_000_000)
+                 .to_integral_value(rounding=ROUND_HALF_UP))
+    whole, fraction = divmod(micros, 1_000_000)
+    return f"{whole // 60:02d}:{whole % 60:02d}.{fraction:06d}"
 
 
 def _number(raw: object) -> float | None:
