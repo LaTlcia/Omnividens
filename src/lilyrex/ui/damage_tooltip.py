@@ -37,11 +37,13 @@ class DamageTooltip:
         theme: TooltipTheme | None = None,
         icon_provider: Callable[[int], Any] | None = None,
         delay_ms: int = 180,
+        show_calculation: bool = False,
     ) -> None:
         self.root = root
         self.theme = theme or TooltipTheme()
         self.icon_provider = icon_provider
         self.delay_ms = max(0, int(delay_ms))
+        self.show_calculation = show_calculation
         self._key: tuple | None = None
         self._provider: Callable[[], PreviewResult] | None = None
         self._after_id: str | None = None
@@ -241,7 +243,8 @@ class DamageTooltip:
         self._image = None
         self.formula_view = None
         screen_w = self.window.winfo_screenwidth()
-        width = min(self.FORMULA_WIDTH if result.calculation else self.WIDTH, max(160, screen_w - 16))
+        full_formula = self.show_calculation and bool(result.calculation)
+        width = min(self.FORMULA_WIDTH if full_formula else self.WIDTH, max(160, screen_w - 16))
         text_width = width - 28
 
         header = tk.Frame(self._content, bg=self.theme.header)
@@ -292,7 +295,7 @@ class DamageTooltip:
                     size=8, color=self.theme.muted,
                 ).pack(anchor="w", pady=(2, 0))
 
-        if result.calculation:
+        if full_formula:
             tk.Frame(self._content, height=1, bg=self.theme.border).pack(fill=tk.X, padx=10)
             self._label(self._content, "完整计算公式 · 移入浮窗后滚轮查看", color="#8ce1d5",
                         size=8).pack(anchor="w", padx=10, pady=(5, 0))
@@ -303,7 +306,7 @@ class DamageTooltip:
             self.formula_view = FormulaView(self._content, self.theme, height=max(40, min(360, available)))
             self.formula_view.frame.pack(fill=tk.BOTH, expand=True, padx=3, pady=(2, 5))
             self.formula_view.set_content(result.calculation, scroll_position)
-        elif result.assumptions:
+        elif self.show_calculation and result.assumptions:
             tk.Frame(self._content, height=1, bg=self.theme.border).pack(fill=tk.X, padx=10)
             # At 340 px this stays compact while preserving service-provided priorities.
             notes = "估计口径：" + "；".join(result.assumptions)

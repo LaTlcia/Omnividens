@@ -54,7 +54,8 @@ def run_gui(source: EventSource, config, resources, new_session: Callable[[], Ba
                            room_id=config.connection.room_id,
                            hover_delay_ms=config.preview.hover_delay_ms,
                            watcher_user_id=config.identity.watcher_user_id,
-                           preview_enabled=config.preview.enabled, playback=playback)
+                           preview_enabled=config.preview.enabled, playback=playback,
+                           show_calculation=config.preview.show_calculation)
         root.title(config.ui_title + (' · 离线回放' if options else ''))
 
         def poll():

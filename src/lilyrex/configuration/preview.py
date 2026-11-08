@@ -25,6 +25,7 @@ class PreviewConfig:
     hover_delay_ms: int = 180
     defaults: EstimateSettings = field(default_factory=EstimateSettings)
     players: Mapping[int, EstimateSettings] = field(default_factory=dict)
+    show_calculation: bool = False
 
     def settings_for(self, user_id: int) -> EstimateSettings:
         return self.players.get(user_id, self.defaults)
@@ -113,27 +114,34 @@ def _warn_charge_fraction() -> None:
         'charge_fraction已弃用：蓄力按比赛经过时间和各技能成长参数自动计算')
 
 
+def _preview_bool(raw: Mapping[str, Any], path: Path, name: str, default: bool) -> bool:
+    env_key = f'LILYREX_PREVIEW_{name.upper()}'
+    if env_key in os.environ:
+        text = os.environ[env_key].lower()
+        if text not in ('true', 'false', '1', '0'):
+            raise _error(path, env_key)
+        return text in ('true', '1')
+    value = raw.get(name, default)
+    if not isinstance(value, bool):
+        raise _error(path, f'damage_preview.{name}')
+    return value
+
+
 def load_config(path: Path) -> PreviewConfig:
     """Parse damage settings; explicit environment values override every player."""
     path = Path(path)
     document = read_document(path)
     raw = _table(document.get('damage_preview', {}), path, 'damage_preview')
-    if set(raw) - {'enabled', 'hover_delay_ms', 'defaults', 'players'}:
+    if set(raw) - {'enabled', 'hover_delay_ms', 'defaults', 'players', 'show_calculation'}:
         raise _error(path, 'damage_preview.<unknown>')
-    enabled = raw.get('enabled', True)
+    enabled = _preview_bool(raw, path, 'enabled', True)
+    show_calculation = _preview_bool(raw, path, 'show_calculation', False)
     delay = raw.get('hover_delay_ms', 180)
-    if 'LILYREX_PREVIEW_ENABLED' in os.environ:
-        value = os.environ['LILYREX_PREVIEW_ENABLED'].lower()
-        if value not in ('true', 'false', '1', '0'):
-            raise _error(path, 'LILYREX_PREVIEW_ENABLED')
-        enabled = value in ('true', '1')
     if 'LILYREX_PREVIEW_HOVER_DELAY_MS' in os.environ:
         try:
             delay = int(os.environ['LILYREX_PREVIEW_HOVER_DELAY_MS'])
         except ValueError:
             raise _error(path, 'LILYREX_PREVIEW_HOVER_DELAY_MS') from None
-    if not isinstance(enabled, bool):
-        raise _error(path, 'damage_preview.enabled')
     if type(delay) is not int or not 0 <= delay <= 5000:
         raise _error(path, 'damage_preview.hover_delay_ms')
     defaults = _table(raw.get('defaults', {}), path, 'damage_preview.defaults')
@@ -160,4 +168,4 @@ def load_config(path: Path) -> PreviewConfig:
         deprecated |= 'charge_fraction' in table
     if deprecated:
         _warn_charge_fraction()
-    return PreviewConfig(enabled, delay, base, MappingProxyType(players))
+    return PreviewConfig(enabled, delay, base, MappingProxyType(players), show_calculation)

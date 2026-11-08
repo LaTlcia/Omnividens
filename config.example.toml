@@ -65,6 +65,7 @@ cards = []                        # configured必填精确card_id+skill_id，不
 # cards = [{card_id = 10001, skill_id = 20001, passive_level_multiplier = 1.5, legendary_level = 1}]
 
 [damage_preview]
+show_calculation = false          # 可选，全局布尔值；true 展开逐目标计算公式，false 显示伤害摘要
 enabled = true                   # 是否显示伤害牌悬停预估
 hover_delay_ms = 180              # 悬停延迟，整数毫秒，0..5000
 

@@ -23,7 +23,7 @@ class GameStyleGUI(WindowLayout, BattleFooter):
     def __init__(self, root, session, resources: UiResources, controls: ControlPort,
                  room_id: str = "", hover_delay_ms: int = 180,
                  watcher_user_id: int = 0, preview_enabled: bool = True,
-                 playback: PlaybackPort | None = None):
+                 playback: PlaybackPort | None = None, *, show_calculation: bool = False):
         self.root, self.session, self.resources = root, session, resources
         self.playback = playback
         self.presenter = BattlePresenter(session, watcher_user_id)
@@ -54,7 +54,7 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         if self.damage_preview is not None and preview_enabled:
             self.damage_tooltip = DamageTooltip(root, theme=TooltipTheme(),
                                                 icon_provider=lambda a: self.icons.attribute(a, 18),
-                                                delay_ms=hover_delay_ms)
+                                                delay_ms=hover_delay_ms, show_calculation=show_calculation)
         self.deck_console.on_hover = self._on_damage_hover
         self.deck_console.on_hover_end = self._hide_damage_preview
         self.deck_console.on_hover_leave = self._leave_damage_preview
@@ -215,7 +215,8 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         self._damage_hover = uid, card
         def provide():
             current_skill = self.deck.view(uid)[0].get(card, 0)
-            return self.damage_preview.preview(uid, card, current_skill)
+            return self.damage_preview.preview(uid, card, current_skill,
+                                               include_calculation=self.damage_tooltip.show_calculation)
         self.damage_tooltip.request((uid, card), provide, x, y)
 
     def _hide_damage_preview(self):

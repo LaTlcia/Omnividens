@@ -28,6 +28,7 @@ class DeckConsole:
         self.icons = icons
         self.uid = self.user = self.tracker = None
         self._head_key = object()
+        self._lethal_columns: tuple[int, int] | None = None
         self.on_hover = None
         self.on_hover_end = None
         self.on_hover_leave = None
@@ -46,7 +47,7 @@ class DeckConsole:
                           highlightcolor=color)
             button.pack(side=tk.LEFT, padx=(2, 0))
             button.set_enabled(False)
-        self.head = tk.Canvas(parent, height=46, bg=self.BG, highlightthickness=0)
+        self.head = tk.Canvas(parent, height=50, bg=self.BG, highlightthickness=0)
         self.head.pack(fill=tk.X, padx=6)
         self.body = tk.Canvas(parent, bg=self.BG, highlightthickness=0)
         self.body.pack(fill=tk.BOTH, expand=True, padx=6, pady=(2, 6))
@@ -127,8 +128,8 @@ class DeckConsole:
 
     def redraw(self):
         self._update_sort_buttons()
+        self._lethal_columns = self._draw_body()
         self._draw_head()
-        self._draw_body()
 
     def _draw_head(self):
         h, u = self.head, self.user
@@ -138,11 +139,12 @@ class DeckConsole:
             cards, used, size, cycle, _, clean = self.tracker.view(self.uid)
             job = self.icons.resources.chara_data.get(str((u or {}).get('characterJobMstId')), {}).get('mainCardType', '')
             key = ((u or {}).get('name'), (u or {}).get('memberRank'), job, len(cards), len(used), size, cycle, clean)
-        if key == self._head_key:
-            return
-        self._head_key = key
-        h.delete("all")
         W = max(h.winfo_width(), 200)
+        cache_key = (key, W, self._lethal_columns)
+        if cache_key == self._head_key:
+            return
+        self._head_key = cache_key
+        h.delete("all")
         if self.uid is None:
             h.create_text(4, 23, anchor="w", text="点击玩家卡片查看记牌", fill="#6c6f93", font=self.F_HEAD)
             return
@@ -156,21 +158,36 @@ class DeckConsole:
                       fill="#ffffff", font=self.F_HEAD)
         total = size or DECK_MAX
         if clean:
-            info = f"第{cycle or '?'}轮   已用 {n_used}/{total}   剩 {total - n_used}   已见 {n_cards}"
+            info = (f"第{cycle or '?'}轮   已用 {n_used}/{total}", f"剩 {total - n_used}   已见 {n_cards}")
         else:                              # joined mid-cycle: still working out where cycles break
-            info = f"中途加入·推算轮次中   已用≥{n_used}   已见 {n_cards}"
-        h.create_text(2, 35, anchor="w", font=F_SMALL, fill="#aab0dc", text=info)
+            info = ("中途加入·推算轮次中", f"已用≥{n_used}   已见 {n_cards}")
+        full_info = "   ".join(info)
+        info_width = W - 8
+        header_y = (29, 42)
+        if self._lethal_columns is not None:
+            for index in range(4):
+                h.create_text(self._lethal_columns[index % 2], header_y[index // 2],
+                              anchor="e", font=self.F_RANK, fill=self.LETHAL_COLOR,
+                              text=f"#{index + 1}", tags=f"lethal_header_{index + 1}")
+            info_width = self._lethal_columns[0] - text_width(self.F_RANK, "#1") - self.METRIC_GAP - 2
+        if text_width(F_SMALL, full_info) <= info_width:
+            h.create_text(2, 35, anchor="w", font=F_SMALL, fill="#aab0dc",
+                          text=full_info, tags="deck_info")
+        else:
+            for y, part in zip(header_y, info):
+                h.create_text(2, y, anchor="w", font=F_SMALL, fill="#aab0dc",
+                              text=CardBase._fit(part, F_SMALL, info_width), tags="deck_info")
 
-    def _draw_body(self):
+    def _draw_body(self) -> tuple[int, int] | None:
         b = self.body
         b.delete("all")
         previous_rows, previous_height = self._hit_rows, self._hit_row_height
         self._hit_rows = []
         if self.uid is None:
-            return
+            return None
         W, H = b.winfo_width(), b.winfo_height()
         if W < 50 or H < 50:
-            return
+            return None
         cards, used, size, _, last, _ = self.tracker.view(self.uid)
         slots = max(size or DECK_MAX, len(cards))
         row = max(self.ROW_MIN, min(self.ROW_MAX, H // slots))
@@ -191,6 +208,8 @@ class DeckConsole:
         rank_width = text_width(self.F_RANK, f"#{slots}") + self.METRIC_GAP
         rank_right = W - 6
         percent_right = rank_right - rank_width
+        columns = (percent_right - percent_width, percent_right)
+        has_grid = False
         for n, entry in enumerate(rows):
             y0, y1 = n * row, (n + 1) * row - 2
             if entry is None:                                # not seen yet
@@ -224,10 +243,10 @@ class DeckConsole:
                               fill="#4a4c66" if done else "#aab0dc",
                               text=CardBase._fit(sk or f"Skill {skill}", self.F_SKILL, label_width))
             if ranking is not None:
+                has_grid = True
                 for index, value in enumerate(ranking.lethal_percentages):
-                    cell_x = percent_right - percent_width if index % 2 == 0 else percent_right
                     cell_y = y0 + (row // 4 if index < 2 else 3 * row // 4)
-                    b.create_text(cell_x, cell_y, anchor="e", font=self.F_RANK,
+                    b.create_text(columns[index % 2], cell_y, anchor="e", font=self.F_RANK,
                                   text="—" if value is None else f"{value}%",
                                   fill=self.LETHAL_DIM if done else self.LETHAL_COLOR,
                                   tags=f"lethal_{index + 1}_{card}")
@@ -237,5 +256,6 @@ class DeckConsole:
                     b.create_text(rank_right, y0 + offset, anchor="e", font=self.F_RANK,
                                   text=f"#{rank}" if rank is not None else "—", fill=color,
                                   tags=f"rank_{metric}_{card}")
+        return columns if has_grid else None
 
 
