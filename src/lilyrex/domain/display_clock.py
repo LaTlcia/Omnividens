@@ -21,7 +21,10 @@ class DisplayClock:
 
     def project(self, event: BattleEvent) -> DisplayClock:
         battle, new_battle, _ = self.battle.project(event)
-        if event.name in ('response:gvg_out_time', 'response:room_leave'):
+        if event.name == 'response:room_leave':
+            # A participant may leave while the same battle continues.
+            return replace(self, battle=battle)
+        if event.name == 'response:gvg_out_time':
             return replace(self, battle=battle, stopped=True)
         if self.stopped and not new_battle:
             return replace(self, battle=battle)
