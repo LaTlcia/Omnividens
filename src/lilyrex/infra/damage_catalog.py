@@ -122,7 +122,7 @@ class LocalDamageCatalog:
         source = path if path is not None else files("lilyrex").joinpath("data/damage_catalog.json")
         try:
             data = json.loads(source.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-            if type(data["schema_version"]) is not int or data["schema_version"] not in (1, 2, 3, 4):
+            if type(data["schema_version"]) is not int or data["schema_version"] not in (1, 2, 3, 4, 5):
                 raise ValueError
             self.source_sha256 = _hashes(data["source_sha256"])
             if not isinstance(data['skills'], list) or not isinstance(data['orders'], list):
@@ -133,7 +133,7 @@ class LocalDamageCatalog:
                 if data['schema_version'] >= 3 and not all(name in item for name in (
                     'min_charge_bonus', 'charge_interval_seconds', 'charge_full_seconds')):
                     raise ValueError
-                if data['schema_version'] == 4 and not all(name in item for name in (
+                if data['schema_version'] >= 4 and not all(name in item for name in (
                     'element_attributes', 'spread_max_targets', 'element_sp_multiplier')):
                     raise ValueError
                 item["unsupported"] = _strings(item.get("unsupported", []))
@@ -145,7 +145,7 @@ class LocalDamageCatalog:
                 item['element_attributes'] = tuple(item.get('element_attributes', ()))
                 skill = DamageSkill(**item)
                 _validate_skill(skill)
-                if (data['schema_version'] == 4 and not skill.element_attributes
+                if (data['schema_version'] >= 4 and not skill.element_attributes
                         and (skill.eh_multiplier != 1 or skill.spread_max_targets
                              or skill.element_sp_multiplier != 1)):
                     raise ValueError
@@ -153,6 +153,15 @@ class LocalDamageCatalog:
                 if key in self._skills:
                     raise ValueError
                 self._skills[key] = skill
+            self._card_types = {key: skill.card_type for key, skill in self._skills.items()}
+            if data['schema_version'] >= 5:
+                if not isinstance(data['rear_types'], list):
+                    raise ValueError
+                for cid, sid, card_type in data['rear_types']:
+                    if (any(type(v) is not int or v <= 0 for v in (cid, sid, card_type))
+                            or card_type not in (5, 6, 7) or (cid, sid) in self._card_types):
+                        raise ValueError
+                    self._card_types[cid, sid] = card_type
             self._orders: dict[int, OrderEffect] = {}
             for item in data["orders"]:
                 item = dict(item)
@@ -189,6 +198,9 @@ class LocalDamageCatalog:
                     self._passives[key] = value
             except (OSError, ValueError, KeyError, TypeError, OverflowError):
                 raise CatalogError(f'被动目录缺失或格式错误：{passive_source}') from None
+
+    def card_type(self, card_id: int, skill_id: int) -> int | None:
+        return self._card_types.get((card_id, skill_id))
 
     def skill(self, card_id: int, skill_id: int) -> DamageSkill | None:
         return self._skills.get((card_id, skill_id))

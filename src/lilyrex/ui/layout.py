@@ -18,7 +18,8 @@ class WindowLayout:
                  font=("Arial", 11, "bold")).pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.console = tk.Frame(side, bg="#16213e")
         self.console.pack(fill=tk.BOTH, expand=True)
-        self.deck_console = DeckConsole(self.console, self.icons, sort_parent=console_header)
+        self.deck_console = DeckConsole(self.console, self.icons, resolve_card_type=self._card_type,
+                                        sort_parent=console_header)
         # everything else (top bar, battlefield, bottom bar) lives left of it
         self.main = tk.Frame(self.root, bg="#1a1a2e")
         self.main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)

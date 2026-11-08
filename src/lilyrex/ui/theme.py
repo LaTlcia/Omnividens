@@ -7,6 +7,13 @@ STACK_TYPE_MAP = {1: "増傷", 2: "増効", 3: "増療", 4: "減傷"}
 CARD_TYPE_MAP = {1: "通常単体", 2: "通常範囲", 3: "特殊単体", 4: "特殊範囲", 5: "支援", 6: "妨害", 7: "回復"}
 ATTRIBUTE_MAP = {1: "火", 2: "水", 3: "風", 4: "光", 5: "闇"}
 ATTR_COLORS = {1: "#FF4444", 2: "#4444FF", 3: "#44FF44", 4: "#FFFF44", 5: "#AA44FF"}
+# Deck stripe colors (available, used), keyed by the observed skill's card type.
+DECK_STRIPE_COLORS = {
+    **dict.fromkeys((1, 2, 3, 4), ("#c0c0c0", "#62626b")),
+    5: ("#ff6060", "#874046"),
+    6: ("#599fff", "#355784"),
+    7: ("#6bcf7f", "#406f4b"),
+}
 PLAYER_JOB_COLOR = {
     "通常単体": "#FF6B6B", "通常範囲": "#FF8E53",
     "特殊単体": "#FFA94D", "特殊範囲": "#FFD93D",

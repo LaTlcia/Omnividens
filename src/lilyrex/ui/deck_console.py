@@ -22,7 +22,8 @@ class DeckConsole:
     AVG_COLOR, MAX_COLOR = "#55c9ff", "#ff707d"
     AVG_DIM, MAX_DIM = "#3e6983", "#805060"
 
-    def __init__(self, parent, icons, *, sort_parent=None):
+    def __init__(self, parent, icons, *, resolve_card_type, sort_parent=None):
+        self.resolve_card_type = resolve_card_type
         self.icons = icons
         self.uid = self.user = self.tracker = None
         self._head_key = object()
@@ -188,13 +189,16 @@ class DeckConsole:
                 b.create_text(W // 2, (y0 + y1) // 2, text="?", fill="#3c3e5c", font=self.F_CARD)
                 continue
             card, skill = entry
-            name, attr, ctype = self.icons.resources.card_data.get(card, (f"Card {card}", 0, 0))
+            name, attr, _ = self.icons.resources.card_data.get(card, (f"Card {card}", 0, 0))
+            ctype = self.resolve_card_type(card, skill) or 0
             done = card in used
-            job_color = readable(PLAYER_JOB_COLOR.get(CARD_TYPE_MAP.get(ctype, ""), "#9e9e9e"))
             b.create_rectangle(0, y0, W - 1, y1, fill="#191a2c" if done else "#2a2b47",
                                outline="#ffd54f" if card == last else ("#26273c" if done else "#4a4c78"),
                                width=2 if card == last else 1)
-            b.create_rectangle(1, y0 + 1, 4, y1, fill="#3a3b52" if done else job_color, width=0)
+            if colors := DECK_STRIPE_COLORS.get(ctype):
+                available_color, used_color = colors
+                b.create_rectangle(1, y0 + 1, 4, y1, fill=used_color if done else available_color,
+                                   width=0, tags=f"card_stripe_{card}")
             x = 8
             if attr in ATTRIBUTE_MAP:
                 b.create_image(x, (y0 + y1) // 2, anchor="w", image=self.icons.attribute(attr, 14, dim=done))

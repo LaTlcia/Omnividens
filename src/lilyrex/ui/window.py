@@ -201,11 +201,15 @@ class GameStyleGUI(WindowLayout, BattleFooter):
         probability = calculate_core_winrate(a, b, order).probability
         return f'{100 * probability:.2f}'.rstrip('0').rstrip('.') + '%'
 
+    def _card_type(self, card: int, skill: int) -> int | None:
+        if self.damage_preview is None:
+            return None
+        return self.damage_preview.catalog.card_type(card, skill)
+
     def _on_damage_hover(self, uid, card, skill, x, y):
         if self.damage_tooltip is None or self.damage_preview is None:
             return
-        known = self.damage_preview.catalog.skill(card, skill)
-        if known is None and self.resources.card_data.get(card, ('', 0, 0))[2] not in (1, 2, 3, 4):
+        if self._card_type(card, skill) in (5, 6, 7):
             self._hide_damage_preview()
             return
         self._damage_hover = uid, card

@@ -152,7 +152,7 @@ def build(source: Path) -> dict[str, Any]:
     pairs: dict[tuple[int, int], int] = {}
 
     def add(card_id: int, skill_id: int, card_type: int) -> None:
-        if not skill_id or card_type not in (1, 2, 3, 4):
+        if not skill_id or card_type not in range(1, 8):
             return
         key = (card_id, skill_id)
         if key in pairs and pairs[key] != card_type:
@@ -166,7 +166,11 @@ def build(source: Path) -> dict[str, Any]:
     for row in rows["CardSuperAwakeningCardType"]:
         add(row["cardMstId"], row["gvgSkillMstId"], row["cardType"])
     compiled = []
+    rear_types = []
     for (cid, sid), ct in sorted(pairs.items()):
+        if ct >= 5:
+            rear_types.append([cid, sid, ct])
+            continue
         p = parameters(skills[sid])
         if p.get("ATTACK_TYPE") not in (1, 2) or "ATTACK_MAGNIFICATION" not in p:
             raise ValueError("Front card has no supported damage definition")
@@ -174,7 +178,7 @@ def build(source: Path) -> dict[str, Any]:
     orders = [asdict(order_effect(r)) for r in sorted(rows["TacticsEffect"], key=lambda r: r["tacticsEffectMstId"])]
     return {"schema_version": GENERATOR_SCHEMA, "source_sha256": hashes,
             "formula_reference": "ArayaToolbox/method/generate_agamotto.py",
-            "skills": compiled, "orders": orders}
+            "skills": compiled, "rear_types": rear_types, "orders": orders}
 
 
 def build_passives(source: Path) -> dict[str, Any]:
