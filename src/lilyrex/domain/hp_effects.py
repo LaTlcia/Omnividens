@@ -39,7 +39,8 @@ def hp_changes(effects: Iterable[Mapping[str, Any]]) -> tuple[HpChange, ...]:
     return tuple(result)
 
 
-def _hp_limit(player: Mapping[str, Any]) -> int | None:
+def effective_max_hp(player: Mapping[str, Any]) -> int | None:
+    """Read the broadcast HP cap, including its current HP modifier."""
     base, extra = player.get('maxHp'), player.get('maxHpEffect', 0)
     if type(base) is not int or base < 0 or type(extra) is not int:
         return None
@@ -71,7 +72,7 @@ def project_hp(history: Mapping[str, Any], changes: tuple[HpChange, ...]
             hp = 0 if change.killed else max(0, hp - change.value)
         else:
             hp += change.value
-            limit = _hp_limit(player)
+            limit = effective_max_hp(player)
             if limit is not None:
                 hp = min(limit, hp)
         pending[change.user_id] = hp

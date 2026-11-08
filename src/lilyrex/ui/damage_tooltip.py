@@ -328,10 +328,13 @@ class DamageTooltip:
         number = "≈ " + self._number(estimate.expected) if self._valid(estimate) else "无法估计"
         self._label(row, number, bold=True,
                     color="#ffcf5c" if estimate.locked else "#8ce1d5").pack(side=tk.RIGHT)
-        prefix = "锁定 " if estimate.locked else ""
-        title = f"{prefix}#{estimate.target_rank} {estimate.target_name}"
+        locked = "锁定 " if estimate.locked else ""
+        downed = "倒地 " if estimate.target_downed else ""
+        prefix = f"{locked}#{estimate.target_rank} {downed}"
         available = max(40, width - self._font.measure(number) - 20)
-        self._label(row, self._lines(title, available, 1), bold=estimate.locked).pack(side=tk.LEFT)
+        name_width = max(0, available - self._font.measure(prefix))
+        name = self._lines(estimate.target_name, name_width, 1) if name_width else ""
+        self._label(row, (prefix + name).rstrip(), bold=estimate.locked).pack(side=tk.LEFT)
 
     def _place(self) -> None:
         self.window.update_idletasks()

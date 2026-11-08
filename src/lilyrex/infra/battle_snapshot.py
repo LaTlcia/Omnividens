@@ -5,6 +5,7 @@ import math
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from lilyrex.domain.hp_effects import effective_max_hp
 from lilyrex.domain.models import ActiveOrder, BaseStats, BattlePlayer, BattleSnapshot, BuffLevels
 from lilyrex.domain.order_models import PendingOrderEffect
 
@@ -67,7 +68,8 @@ def snapshot_from_history(history: Mapping[str, Any],
                 sp_defense=_integer(user.get("magicalDefenseEffectLevel")),
                 elemental_attack=_elements(user.get("attributeAttackEffectLevel")),
                 elemental_defense=_elements(user.get("attributeDefenseEffectLevel"))),
-            hp=_integer(user.get("hp")), party_sequence=_integer(user.get("partySequence")),
+            hp=_integer(user.get("hp")), max_hp=effective_max_hp(user),
+            party_sequence=_integer(user.get("partySequence")),
             enemy_target_rank=_integer(user.get("enemyTargetMemberRank")),
             job_card_type=(job_card_types or {}).get(_integer(user.get("characterJobMstId")), 0),
             last_attribute=_integer(user.get("executedCardAttribute")),

@@ -38,7 +38,7 @@ def damage_trace(skill: DamageSkill, actor: BattlePlayer, target: BattlePlayer,
     ratio = min(10, math.floor(attack / defense)) if attack < 10 * defense else 10
     factor_text = ' × '.join(f'{label}[{number(value)}]' for label, value in factors.factors)
     return (
-        f'目标 #{target.rank} {target.name}',
+        f'目标 #{target.rank} {target.name}' + ('（倒地）' if target.hp <= 0 else ''),
         _stat(actor, skill, attack=True, value=attack),
         _stat(target, skill, attack=False, value=defense),
         f'M = {factor_text} = {number(factors.multiplier)}',

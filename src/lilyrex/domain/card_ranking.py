@@ -5,7 +5,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import math
 
-from .models import DamageEstimate
+from .models import BattlePlayer, DamageEstimate
+
+
+EMPTY_LETHAL_PERCENTAGES: tuple[int | None, ...] = (None, None, None, None)
 
 
 @dataclass(frozen=True)
@@ -26,10 +29,35 @@ class CardDamageRank:
     avg_rank: int | None = None
     max_rank: int | None = None
     reason: str | None = None
+    lethal_percentages: tuple[int | None, ...] = EMPTY_LETHAL_PERCENTAGES
 
 
 def _valid_damage(value: float) -> bool:
     return math.isfinite(value) and value >= 0
+
+
+def lethal_percentages(estimates: Sequence[DamageEstimate],
+                       frontline: Mapping[int, BattlePlayer]) -> tuple[int | None, ...]:
+    """Floor expected damage as a percentage of effective max HP for enemy ranks 1–4."""
+    damage_by_user: dict[int, float | None] = {}
+    for estimate in estimates:
+        uid = estimate.target_user_id
+        damage_by_user[uid] = None if uid in damage_by_user else estimate.expected
+
+    by_rank: dict[int, int | None] = {}
+    for player in frontline.values():
+        rank = player.rank
+        if rank not in range(1, 5):
+            continue
+        expected = damage_by_user.get(player.user_id)
+        if (rank in by_rank or expected is None or not _valid_damage(expected)
+                or player.max_hp is None or player.max_hp <= 0):
+            by_rank[rank] = None
+            continue
+        # Floor the binary64 estimate exactly, including values just below 100%.
+        numerator, denominator = expected.as_integer_ratio()
+        by_rank[rank] = (100 * numerator) // (denominator * player.max_hp)
+    return tuple(by_rank.get(rank) for rank in range(1, 5))
 
 
 def summarize_card_damage(card_id: int, skill_id: int,

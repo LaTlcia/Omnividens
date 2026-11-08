@@ -18,7 +18,8 @@ class DeckConsole:
     F_SKILL = ("Arial", 8)
     F_HEAD = ("Arial", 11, "bold")
     F_RANK = ("Arial", 7, "bold")
-    RANK_WIDTH = 44
+    METRIC_GAP = 6
+    LETHAL_COLOR, LETHAL_DIM = "#d5d8e8", "#9597ab"
     AVG_COLOR, MAX_COLOR = "#55c9ff", "#ff707d"
     AVG_DIM, MAX_DIM = "#3e6983", "#805060"
 
@@ -182,6 +183,14 @@ class DeckConsole:
             if old_entry != new_entry or self._hover_y % row >= row - 2:
                 self._end_hover()
         self._hit_rows, self._hit_row_height = rows, row
+        # Share column edges across the deck. Arial uses equal-width digits.
+        largest_percent = max((value for ranked in self.rankings.values()
+                               for value in ranked.lethal_percentages if value is not None),
+                              default=0)
+        percent_width = text_width(self.F_RANK, f"{max(999, largest_percent)}%") + self.METRIC_GAP
+        rank_width = text_width(self.F_RANK, f"#{slots}") + self.METRIC_GAP
+        rank_right = W - 6
+        percent_right = rank_right - rank_width
         for n, entry in enumerate(rows):
             y0, y1 = n * row, (n + 1) * row - 2
             if entry is None:                                # not seen yet
@@ -204,21 +213,28 @@ class DeckConsole:
                 b.create_image(x, (y0 + y1) // 2, anchor="w", image=self.icons.attribute(attr, 14, dim=done))
                 x += 17
             ranking = self._rank_for(card, skill, ctype)
-            text_width = W - x - 6 - (self.RANK_WIDTH if ranking is not None else 0)
+            label_width = percent_right - 2 * percent_width - x if ranking is not None else rank_right - x
             two_lines = row >= 28
             name_y = y0 + row // 4 + 1 if two_lines else (y0 + y1) // 2
             b.create_text(x, name_y, anchor="w", font=self.F_CARD, fill="#5d607e" if done else "#ffffff",
-                          text=CardBase._fit(name, self.F_CARD, text_width), tags=f"card_name_{card}")
+                          text=CardBase._fit(name, self.F_CARD, label_width), tags=f"card_name_{card}")
             if two_lines:
                 sk = self.icons.resources.skill_names.get(skill) if skill else "（NeunWelt 充能）"
                 b.create_text(x, y1 - row // 4 + 1, anchor="w", font=self.F_SKILL,
                               fill="#4a4c66" if done else "#aab0dc",
-                              text=CardBase._fit(sk or f"Skill {skill}", self.F_SKILL, text_width))
+                              text=CardBase._fit(sk or f"Skill {skill}", self.F_SKILL, label_width))
             if ranking is not None:
+                for index, value in enumerate(ranking.lethal_percentages):
+                    cell_x = percent_right - percent_width if index % 2 == 0 else percent_right
+                    cell_y = y0 + (row // 4 if index < 2 else 3 * row // 4)
+                    b.create_text(cell_x, cell_y, anchor="e", font=self.F_RANK,
+                                  text="—" if value is None else f"{value}%",
+                                  fill=self.LETHAL_DIM if done else self.LETHAL_COLOR,
+                                  tags=f"lethal_{index + 1}_{card}")
                 for metric, rank, offset, color in (
                         ("avg", ranking.avg_rank, row // 4, self.AVG_DIM if done else self.AVG_COLOR),
                         ("max", ranking.max_rank, 3 * row // 4, self.MAX_DIM if done else self.MAX_COLOR)):
-                    b.create_text(W - 6, y0 + offset, anchor="e", font=self.F_RANK,
+                    b.create_text(rank_right, y0 + offset, anchor="e", font=self.F_RANK,
                                   text=f"#{rank}" if rank is not None else "—", fill=color,
                                   tags=f"rank_{metric}_{card}")
 

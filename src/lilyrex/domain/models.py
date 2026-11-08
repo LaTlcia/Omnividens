@@ -40,6 +40,7 @@ class BattlePlayer:
     attack_stacks: int = 0
     defense_stacks: int = 0
     deck_id: int | None = None
+    max_hp: int | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,10 @@ class BattleSnapshot:
     pending_orders: tuple = ()
     elapsed_time_known: bool = True
 
+    def enemy_frontline(self, actor: BattlePlayer) -> tuple[BattlePlayer, ...]:
+        return tuple(p for p in self.players.values()
+                     if p.guild_id > 0 and p.guild_id != actor.guild_id and p.party_sequence == 1)
+
 
 @dataclass(frozen=True)
 class EstimateSettings:
@@ -162,6 +167,7 @@ class DamageEstimate:
     attack: float
     defense: float
     locked: bool = False
+    target_downed: bool = False
 
 
 @dataclass(frozen=True)

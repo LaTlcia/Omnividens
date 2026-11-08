@@ -51,9 +51,9 @@ warmup = true                     # 跳转前预热记牌与被动池
 [passives]
 mode = "observed"                 # observed已见池/configured完整配置池/manual手动UP
 level_multiplier = 1.5            # 被动等级倍率，独立于主动技能倍率
-theme_attributes = []             # 独立的被动主题：1火/2水/3风/4光/5暗，各自加2个百分点
+theme_attributes = [1,2,3]             # 独立的被动主题：1火/2水/3风/4光/5暗，各自加2个百分点
 # 火/风同时有被动主题增益时填[1,3]；不从damage_preview.theme倍率推导概率。
-legendary_level = 0               # 0未知不计；1..5为limitBreakCount 0..4
+legendary_level = 5               # 0未知不计；1..5为limitBreakCount 0..4
 cards = []                        # configured必填精确card_id+skill_id，不重复卡
 # deck_id = 123                   # 可选：完整配置池仅用于此卡组，切组后退回已见池
 # [passives.players."10001"]      # 合成玩家ID示例；未填字段继承passives
@@ -71,10 +71,10 @@ hover_delay_ms = 180              # 悬停延迟，整数毫秒，0..5000
 [damage_preview.defaults]
 skill_level = 1.5                 # 技能等级乘数，非技能等级编号
 benefit = 1.1                     # 恩惠乘数
-charm_bonus = { fire = 0.0, water = 0.0, wind = 0.0, light = 0.0, dark = 0.0 }
+charm_bonus = { fire = 0.31, water = 0.31, wind = 0.31, light = 0.09, dark = 0.09 }
 # CHARM按当前牌属性取1+bonus；例如fire=0.1、wind=0.2，其余保持0.0。
-adx = 1.0                        # ADX直接乘数，如0.95/1/1.05/0.9975
-theme = { fire = 1.0, water = 1.0, wind = 1.0, light = 1.0, dark = 1.0 }
+adx = 0.9975                        # ADX直接乘数，如0.95/1/1.05/0.9975
+theme = { fire = 1.1, water = 1.1, wind = 1.1, light = 1.0, dark = 1.0 }
 # 主题按当前牌属性取直接倍率；例如fire=1.1、wind=1.2，其余保持1.0。
 up_bonus = 0.0                   # manual模式手工UP；observed/configured不叠加此值
 crit_rate = 0.05                 # 暴击概率，0..1；基础为5%

@@ -74,20 +74,19 @@ class DamagePreviewService:
         notes.append(f"基础暴率按配置 {settings.crit_rate:.0%}")
         if actor.hp <= 0:
             notes.append("攻击者已倒地：显示面板理论值")
-        candidates = [p for p in self.snapshot.players.values()
-                      if p.guild_id != actor.guild_id and p.guild_id > 0 and p.party_sequence == 1]
-        locked = next((p for p in candidates if p.rank == actor.enemy_target_rank), None)
+        candidates = self.snapshot.enemy_frontline(actor)
+        if not candidates:
+            return PreviewResult(**base, assumptions=tuple(notes), error="当前没有敌方前排")
+        locked = None
         if actor.enemy_target_rank:
+            locked = next((p for p in candidates if p.rank == actor.enemy_target_rank), None)
             if locked is None:
                 notes.append("原锁定目标已离开前排")
             elif locked.hp <= 0:
-                notes.append("原锁定目标已倒地，列出其他前排")
+                notes.append("原锁定目标已倒地，按当前面板估算理论伤害")
+                locked = None
         else:
             notes.append("自动选敌：以下为各目标单独命中时估计")
-        live = sorted((p for p in candidates if p.hp > 0),
-                      key=lambda p: (p is not locked, p.rank, p.user_id))
-        if not live:
-            return PreviewResult(**base, assumptions=tuple(notes), error="当前没有存活敌前排")
         resolved_orders = []
         for pending in self.snapshot.pending_orders:
             effect = self.catalog.order(pending.effect_id)
@@ -109,7 +108,7 @@ class DamagePreviewService:
             '当前状态下次使用的预估；不是刚才该次攻击的实伤复算。',
             *condition.notes,
         ] if include_calculation else []
-        for target in live:
+        for target in sorted(candidates, key=lambda p: (p.hp <= 0, p is not locked, p.rank, p.user_id)):
             if target.stats is None:
                 notes.append(f"#{target.rank}缺少防御面板，未估计")
                 continue
@@ -130,10 +129,14 @@ class DamagePreviewService:
                 damage = estimate_damage(attack, defense, factors.multiplier, factors.crit_rate,
                                          factors.received_multiplier)
             except ValueError:
+                if target.hp <= 0:
+                    notes.append(f"#{target.rank}倒地目标的面板或乘区参数无效，未估计")
+                    continue
                 return PreviewResult(**base, assumptions=tuple(dict.fromkeys(notes)), error="面板或乘区参数无效")
             notes.extend(factors.notes)
             estimates.append(DamageEstimate(target.user_id, target.rank, target.name, damage.expected,
-                                             damage.minimum, damage.maximum, attack, defense, target is locked))
+                                             damage.minimum, damage.maximum, attack, defense,
+                                             locked=target is locked, target_downed=target.hp <= 0))
             if include_calculation:
                 calculation.extend(damage_trace(skill, actor, target, attack, defense, factors, damage))
         def priority(note: str) -> int:
